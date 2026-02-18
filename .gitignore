@@ -1,0 +1,21 @@
+.DS_Store
+.idea/
+.vscode/
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.*
+*.log
+
+# Go
+bin/
+*.exe
+*.test
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
