@@ -1,0 +1,96 @@
+diff --git a/docs/README.md b/docs/README.md
+index 2557561..765e1dc 100644
+--- a/docs/README.md
++++ b/docs/README.md
+@@ -1 +1,85 @@
+-README
++# Docs Overview
++
++Цей каталог містить документацію для Incident Replay & Load Simulator.
++
++Основна ціль системи: відтворювати потік подій/запитів з контролем RPS/latency та збирати метрики.
++
++## Структура репозиторію
++
++Високорівнева структура:
++
++- `apps/backend` — Backend API (control-plane)
++  - HTTP API для:
++    - `/healthz` — health-check
++    - `/metrics` — метрики (Prometheus format)
++    - `/replay/start` — старт сценарію навантаження
++    - `/replay/stop` — зупинка
++    - `/replay/status` — статус виконання
++  - In-memory scenario runner (load / incident replay).
++
++- `apps/load` — Load runner (data-plane)
++  - Виконує фактичний replay / генерацію навантаження (v0 може бути вбудовано в backend, надалі — окремий сервіс).
++
++- `apps/frontend` — Frontend UI
++  - Керування сценаріями та базовий перегляд метрик.
++
++- `agent` — допоміжні агенти / утиліти (CLI/sidecar тощо).
++
++- `docs` — документація (цей каталог).
++
++- `infra/k8s` — маніфести для деплою в Kubernetes (Helm / raw YAML).
++
++- `infra/terraform` — інфраструктура (БД, черги, storage тощо — на майбутні версії).
++
++Додаткові файли:
++
++- `Makefile` — основні цілі для розробки, тестів та CI:
++  - `make fmt`
++  - `make lint`
++  - `make test`
++  - `make build`
++  - `make k6-smoke`
++- `README.md` (root) — короткий опис проєкту та базові інструкції.
++
++## Архітектура
++
++Поточна версія архітектури описана в [`architecture.md`](./architecture.md).
++
++Ключові компоненти (v0):
++
++- Backend API (control-plane)
++- Load runner (data-plane)
++- Frontend UI
++- Observability (метрики, логи)
++
++Спосіб деплою (v0):
++
++- Локально: `docker compose` або `go run`.
++- Далі: Kubernetes (Helm) + Terraform для базових залежностей.
++
++## API
++
++Опис HTTP API (v0) знаходиться в [`api.md`](./api.md).
++
++Основні endpoint-и:
++
++- `GET /healthz` — health-check.
++- `GET /metrics` — Prometheus metrics.
++- `POST /replay/start` — старт replay.
++- `POST /replay/stop` — стоп replay.
++- `GET /replay/status` — статус сценарію.
++
++## Формат подій (Replay input)
++
++Формат вхідних подій для replay описаний у [`events.md`](./events.md).
++
++Базовий формат — JSONL:
++
++- один рядок = один event;
++- поля: `ts`, `type`, `method`, `path`, `headers`, `body`, `weight`.
++
++## Definition of Done / стандарти
++
++Вимоги до PR, стандарти коду та спостережуваності описані в [`dod.md`](./dod.md).
++
++Ключові моменти:
++
++- Успішний прохід `make fmt`, `make lint`, `make test`, `make build`, `make k6-smoke`.
++- Жодних секретів у репо.
++- Конфігурація через env vars (`.env.example` як приклад).
++- Наявність `/healthz` та `/metrics`.

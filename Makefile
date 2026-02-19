@@ -36,14 +36,33 @@ run-backend: ## Run backend locally (expects apps/backend cmd/main.go later)
 	@echo "==> run backend"
 	@cd $(BACKEND_DIR) && go run ./cmd/server
 
-k6-smoke: ## Run k6 smoke test (expects k6 script later)
+k6-smoke: ## Run k6 smoke test (starts backend temporarily)
 	@echo "==> k6 smoke"
-	@if command -v k6 >/dev/null 2>&1; then \
-		if [ -f "$(LOAD_DIR)/smoke.js" ]; then (cd $(LOAD_DIR) && k6 run -u 1 -d 30s smoke.js); \
-		else echo "skip: no $(LOAD_DIR)/smoke.js"; fi \
-	else \
-		echo "skip: k6 not installed"; \
-	fi
+	@if ! command -v k6 >/dev/null 2>&1; then echo "skip: k6 not installed"; exit 0; fi
+	@if [ ! -f "$(LOAD_DIR)/smoke.js" ]; then echo "skip: no $(LOAD_DIR)/smoke.js"; exit 0; fi
+
+	@echo "==> starting backend on :8080"
+	@cd $(BACKEND_DIR) && (ADDR=":8080" nohup go run ./cmd/server > ../../.backend.log 2>&1 & echo $$! > ../../.backend.pid)
+
+	@echo "==> waiting for backend"
+	@for i in $$(seq 1 30); do \
+		if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1; then \
+			echo "backend is up"; break; \
+		fi; \
+		sleep 1; \
+		if [ $$i -eq 30 ]; then \
+			echo "backend failed to start. See .backend.log"; \
+			exit 1; \
+		fi; \
+	done
+
+	@echo "==> running k6"
+	@cd $(LOAD_DIR) && BASE_URL="http://127.0.0.1:8080" k6 run -u 1 -d 30s smoke.js
+
+	@echo "==> stopping backend"
+	@kill $$(cat .backend.pid) >/dev/null 2>&1 || true
+	@rm -f .backend.pid
+	@echo "==> k6 smoke OK"
 
 ci: fmt lint test build k6-smoke ## Full local CI pipeline
 	@echo "==> CI OK"
