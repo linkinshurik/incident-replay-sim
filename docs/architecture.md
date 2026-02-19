@@ -9,6 +9,10 @@ Incident Replay & Load Simulator: відтворювати потік подій
 - Frontend UI: керування сценаріями + перегляд базових метрик (v0).
 - Observability: /metrics, logs.
 
+## Control-plane vs Data-plane Responsibilities
+- **Control-plane (Backend API)**: керує життєвим циклом сценаріїв, приймає команди від користувача, забезпечує конфігурування, збір та експозицію метрик і статусів.
+- **Data-plane (Load runner)**: виконує безпосередній replay подій, генерує навантаження на цільові сервіси, збирає показники ефективності виконання.
+
 ## Deployment (v0)
 - Local: docker compose або `go run`.
 - Later: Kubernetes (Helm) + Terraform для бази/черги (якщо буде).
