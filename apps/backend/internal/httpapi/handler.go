@@ -62,17 +62,50 @@ func (h *Handler) replayStart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req startReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
 
-	runID, err := h.runner.Start(replay.StartParams{
+	// Set default for backward compatibility
+	if req.Mode == "" {
+		req.Mode = "burst"
+	}
+
+	// Validate mode
+	if req.Mode != "burst" && req.Mode != "timestamp" {
+		http.Error(w, "mode must be 'burst' or 'timestamp'", http.StatusBadRequest)
+		return
+	}
+
+	// Validate speed if set
+	if req.Speed != 0 && req.Speed <= 0 {
+		http.Error(w, "speed must be > 0", http.StatusBadRequest)
+		return
+	}
+
+	// Validate maxDelayMs if set
+	if req.MaxDelayMs < 0 {
+		http.Error(w, "maxDelayMs must be >= 0", http.StatusBadRequest)
+		return
+	}
+
+	// Construct start params with extra fields
+	params := replay.StartParams{
 		ScenarioID:    req.ScenarioID,
 		TargetBaseURL: req.TargetBaseURL,
 		RPS:           req.RPS,
 		Duration:      time.Duration(req.DurationSec) * time.Second,
-	})
+		Mode:          req.Mode,
+		Speed:         req.Speed,
+		MaxDelayMs:    req.MaxDelayMs,
+		StartFromTs:   req.StartFromTs,
+		EndAtTs:       req.EndAtTs,
+	}
+
+	runID, err := h.runner.Start(params)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -231,6 +264,13 @@ type startReq struct {
 	TargetBaseURL string `json:"targetBaseUrl"`
 	RPS           int    `json:"rps"`
 	DurationSec   int    `json:"durationSec"`
+
+	// New optional fields
+	Mode        string  `json:"mode,omitempty"`        // burst|timestamp, default burst
+	Speed       float64 `json:"speed,omitempty"`       // float64 > 0
+	MaxDelayMs  int64   `json:"maxDelayMs,omitempty"`  // int >= 0
+	StartFromTs string  `json:"startFromTs,omitempty"` // RFC3339 timestamp
+	EndAtTs     string  `json:"endAtTs,omitempty"`     // RFC3339 timestamp
 }
 
 type stopReq struct {

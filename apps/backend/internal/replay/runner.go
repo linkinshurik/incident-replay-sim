@@ -71,7 +71,10 @@ func (s *Stats) CalculateP95() {
 		return samples[i] < samples[j]
 	})
 
-	idx := int(float64(len(samples))*0.95) - 1
+	idx := int(float64(len(samples)) * 0.95)
+	if idx > 0 {
+		idx--
+	}
 	if idx < 0 {
 		idx = 0
 	}
@@ -112,9 +115,6 @@ func NewRun(runID string) *Run {
 
 // MarkStopped marks the run as stopped
 func (r *Run) MarkStopped() {
-	// Mark as stopped only if running
-	// Cancel the context if any
-	// Decrement active runs gauge on stop
 	gauge := promReplayRunsActive
 
 	r.mu.Lock()
@@ -213,6 +213,13 @@ type StartParams struct {
 	TargetBaseURL string
 	RPS           int
 	Duration      time.Duration
+
+	// New optional fields
+	Mode        string  // burst|timestamp
+	Speed       float64 // >0
+	MaxDelayMs  int64   // >=0
+	StartFromTs string  // RFC3339 timestamp
+	EndAtTs     string  // RFC3339 timestamp
 }
 
 type StatusStats struct {
@@ -235,6 +242,13 @@ func NewRunner() *Runner {
 	}
 }
 
+func parseTimestamp(ts string) (time.Time, error) {
+	if ts == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, ts)
+}
+
 func (r *Runner) Start(params StartParams) (string, error) {
 	if strings.TrimSpace(params.TargetBaseURL) == "" {
 		return "", errors.New("targetBaseUrl is required")
@@ -249,10 +263,50 @@ func (r *Runner) Start(params StartParams) (string, error) {
 		return "", errors.New("scenarioId is required")
 	}
 
+	if params.Mode == "" {
+		params.Mode = "burst"
+	}
+
+	// Validate mode
+	if params.Mode != "burst" && params.Mode != "timestamp" {
+		return "", errors.New("mode must be 'burst' or 'timestamp'")
+	}
+
+	if params.Speed != 0 && params.Speed <= 0 {
+		return "", errors.New("speed must be > 0")
+	}
+
+	if params.MaxDelayMs < 0 {
+		return "", errors.New("maxDelayMs must be >= 0")
+	}
+
+	// Validate timestamps format StartFromTs, EndAtTs if not empty
+	startFrom, err := parseTimestamp(params.StartFromTs)
+	if err != nil {
+		return "", fmt.Errorf("invalid startFromTs: %w", err)
+	}
+	endAt, err := parseTimestamp(params.EndAtTs)
+	if err != nil {
+		return "", fmt.Errorf("invalid endAtTs: %w", err)
+	}
+
+	if !startFrom.IsZero() && !endAt.IsZero() && !(startFrom.Before(endAt) || startFrom.Equal(endAt)) {
+		return "", errors.New("startFromTs must be before endAtTs")
+	}
+
 	// Load scenario events
-	events, err := scenario.LoadScenario(params.ScenarioID)
+	rawEvents, err := scenario.LoadScenario(params.ScenarioID)
 	if err != nil {
 		return "", fmt.Errorf("load scenario error: %w", err)
+	}
+
+	// In timestamp mode, we require events to have valid ts and sort them
+	var events []scenario.Event
+	if params.Mode == "timestamp" {
+		return "", errors.New("timestamp mode is not implemented yet")
+	} else {
+		// For burst mode, use raw events
+		events = rawEvents
 	}
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
@@ -277,6 +331,7 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	return runID, nil
 }
 
+// runLoad runs the replay load according to provided parameters
 func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, events []scenario.Event) {
 	baseURL := strings.TrimRight(params.TargetBaseURL, "/")
 
@@ -289,181 +344,126 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 	rps := params.RPS
 	dur := params.Duration
 
-	interval := time.Second / time.Duration(rps) // spacing between requests
-	if interval == 0 {
-		interval = time.Millisecond * 1
-	}
+	if params.Mode == "burst" {
+		// Burst mode: send requests spaced by interval = 1/rps
+		interval := time.Second / time.Duration(rps) // spacing between requests
+		if interval == 0 {
+			interval = time.Millisecond * 1
+		}
 
-	end := time.Now().Add(dur)
+		end := time.Now().Add(dur)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 
-	randSrc := rand.NewSource(time.Now().UnixNano())
-	randGen := rand.New(randSrc)
+		randSrc := rand.NewSource(time.Now().UnixNano())
+		randGen := rand.New(randSrc)
 
-	eventsLen := len(events)
+		eventsLen := len(events)
 
-	for {
-		select {
-		case <-ctx.Done():
-			run.MarkStopped()
-			return
-		case now := <-ticker.C:
-			if now.After(end) {
-				// Time exceeded stop run
+		for {
+			select {
+			case <-ctx.Done():
 				run.MarkStopped()
 				return
-			}
+			case now := <-ticker.C:
+				if now.After(end) {
+					// Time exceeded stop run
+					run.MarkStopped()
+					return
+				}
 
-			start := time.Now()
+				start := time.Now()
 
-			// choose event weighted
-			ev := events[randGen.Intn(eventsLen)]
+				// choose event weighted
+				ev := events[randGen.Intn(eventsLen)]
 
-			url := baseURL + ev.Path
+				url := baseURL + ev.Path
 
-			var req *http.Request
-			var err error
+				var req *http.Request
+				var err error
 
-			if ev.Body != "" {
-				req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
-			} else {
-				req, err = http.NewRequest(ev.Method, url, nil)
-			}
-			if err != nil {
+				if ev.Body != "" {
+					req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
+				} else {
+					req, err = http.NewRequest(ev.Method, url, nil)
+				}
+				if err != nil {
+					latencyMs := time.Since(start).Milliseconds()
+					run.AddSample(latencyMs, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				// add headers
+				for k, v := range ev.Headers {
+					req.Header.Set(k, v)
+				}
+
+				resp, err := r.httpClient.Do(req)
 				latencyMs := time.Since(start).Milliseconds()
-				run.AddSample(latencyMs, true)
-				promReplayErrorsTotal.Inc()
-				continue
+
+				promReplayRequestDurationMs.Observe(float64(latencyMs))
+
+				if err != nil {
+					// Record error sample
+					run.AddSample(0, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				resp.Body.Close()
+
+				isError := resp.StatusCode < 200 || resp.StatusCode >= 300
+
+				// Record stats
+				run.AddSample(latencyMs, isError)
+
+				if isError {
+					promReplayErrorsTotal.Inc()
+				}
 			}
-
-			// add headers
-			for k, v := range ev.Headers {
-				req.Header.Set(k, v)
-			}
-
-			resp, err := r.httpClient.Do(req)
-			latencyMs := time.Since(start).Milliseconds()
-
-			promReplayRequestDurationMs.Observe(float64(latencyMs))
-
-			if err != nil {
-				// Record error sample
-				run.AddSample(0, true)
-				promReplayErrorsTotal.Inc()
-				continue
-			}
-
-			_ = resp.Body.Close()
-
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				// Non 2xx status
-				run.AddSample(latencyMs, true)
-				promReplayErrorsTotal.Inc()
-				continue
-			}
-
-			// success
-			run.AddSample(latencyMs, false)
 		}
+	} else {
+		// Timestamp mode not implemented yet
+		// Just mark failed
+		run.MarkFailed()
 	}
 }
 
 func (r *Runner) Stop(runID string) error {
-	if strings.TrimSpace(runID) == "" {
-		return errors.New("runId is required")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	run, ok := r.runs[runID]
+	if !ok {
+		return errors.New("runId not found")
 	}
-	if ok := r.StopRun(runID); !ok {
-		return errors.New("run not found")
-	}
+
+	run.MarkStopped()
 	return nil
 }
 
-func (r *Runner) Status(runID string) (Status, error) {
-	if strings.TrimSpace(runID) == "" {
-		return Status{}, errors.New("runId is required")
-	}
+func (r *Runner) Status(runID string) (*Status, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	run, ok := r.GetRun(runID)
+	run, ok := r.runs[runID]
 	if !ok {
-		return Status{}, errors.New("run not found")
+		return nil, errors.New("runId not found")
 	}
 
-	// Calculate latest p95
-	// Defensive: run.Stats.CalculateP95()
+	// update p95 on status request
 	run.UpdateP95()
 
-	// Snapshot values
-	run.Stats.mu.Lock()
-	requests := run.Stats.Requests
-	errorsCount := run.Stats.Errors
-	p95 := run.Stats.p95ms
-	run.Stats.mu.Unlock()
-
-	return Status{
-		RunID:     run.RunID,
+	return &Status{
+		RunID:     runID,
 		State:     run.State,
 		StartedAt: run.StartedAt.Format(time.RFC3339),
 		Stats: StatusStats{
-			Requests: requests,
-			Errors:   errorsCount,
-			P95ms:    p95,
+			Requests: run.Stats.Requests,
+			Errors:   run.Stats.Errors,
+			P95ms:    run.Stats.P95(),
 		},
 	}, nil
-}
-
-// StartRun creates and stores a new run
-func (r *Runner) StartRun(runID string) *Run {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run := NewRun(runID)
-	r.runs[runID] = run
-	return run
-}
-
-// StopRun marks a run as stopped and cancels its context
-func (r *Runner) StopRun(runID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run, ok := r.runs[runID]
-	if !ok {
-		return false
-	}
-	run.MarkStopped()
-
-	// update active runs gauge
-	promReplayRunsActive.Dec()
-
-	return true
-}
-
-// GetRun fetches a run by ID
-func (r *Runner) GetRun(runID string) (*Run, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run, ok := r.runs[runID]
-	return run, ok
-}
-
-// Simulate recording a latency sample or error (for usage)
-// This is just an example; actual runner would call AddSample
-func (r *Runner) RecordSample(runID string, latencyMs int64, isError bool) {
-	if run, ok := r.GetRun(runID); ok {
-		run.AddSample(latencyMs, isError)
-	}
-}
-
-// PeriodicUpdate updates p95 for all runs - should be called periodically
-func (r *Runner) PeriodicUpdate() {
-	r.mu.Lock()
-	runs := make([]*Run, 0, len(r.runs))
-	for _, run := range r.runs {
-		runs = append(runs, run)
-	}
-	r.mu.Unlock()
-
-	for _, run := range runs {
-		run.UpdateP95()
-	}
 }

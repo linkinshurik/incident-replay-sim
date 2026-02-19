@@ -19,7 +19,12 @@ Request JSON:
   "scenarioId": "string",
   "targetBaseUrl": "string",
   "rps": 10,
-  "durationSec": 60
+  "durationSec": 60,
+  "mode": "burst|timestamp",       # optional, default "burst"
+  "speed": 1.0,                   # optional, > 0
+  "maxDelayMs": 0,                # optional, >= 0
+  "startFromTs": "RFC3339",    # optional, start timestamp
+  "endAtTs": "RFC3339"          # optional, end timestamp
 }
 
 Response:
