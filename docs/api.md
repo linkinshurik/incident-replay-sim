@@ -55,3 +55,31 @@ Response:
     "p95ms": 0
   }
 }
+
+## Scenario Storage
+
+POST `/scenarios/upload`
+Accept JSON:
+{
+  "scenarioId": "string",
+  "jsonl": "string"
+}
+- `scenarioId` must be safe, only letters, digits, underscore, or dash
+- Stores the content into `./data/scenarios/<scenarioId>.jsonl`
+
+Response:
+- 200 OK
+{
+  "status": "ok",
+  "scenarioId": "string"
+}
+
+GET `/scenarios/list`
+Returns a list of stored `scenarioId`s
+
+Response:
+- 200 OK
+[
+  "scenario1",
+  "scenario2"
+]

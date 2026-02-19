@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"time"
 
 	"incident-replay/backend/internal/replay"
@@ -12,6 +16,10 @@ import (
 
 // Removed duplicate prometheus metrics registration from here.
 // Metrics registration is done in internal/replay/runner.go
+
+const scenariosDataDir = "./data/scenarios"
+
+var validScenarioID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 type Handler struct {
 	runner *replay.Runner
@@ -32,6 +40,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/replay/status", h.replayStatus)
 
 	mux.HandleFunc("/debug/echo", h.debugEcho)
+
+	mux.HandleFunc("/scenarios/upload", h.scenarioUpload)
+	mux.HandleFunc("/scenarios/list", h.scenarioList)
 
 	return withJSON(withLogging(mux))
 }
@@ -122,6 +133,97 @@ func (h *Handler) debugEcho(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+// POST /scenarios/upload
+// Accepts JSON {scenarioId string, jsonl string}
+// Stores content into ./data/scenarios/<scenarioId>.jsonl
+func (h *Handler) scenarioUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ScenarioID string `json:"scenarioId"`
+		JSONL      string `json:"jsonl"`
+	}
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	if !validScenarioID.MatchString(req.ScenarioID) {
+		http.Error(w, "invalid scenarioId", http.StatusBadRequest)
+		return
+	}
+
+	// Create directory if not exists
+	err := os.MkdirAll(scenariosDataDir, 0o755)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Safe filepath join
+	path := filepath.Join(scenariosDataDir, req.ScenarioID+".jsonl")
+
+	// Validate no ../ in final path
+	// fix: use filepath.Clean on path for prefix check
+	if !filepath.HasPrefix(filepath.Clean(path), filepath.Clean(scenariosDataDir)+string(filepath.Separator)) {
+		http.Error(w, "invalid scenarioId path", http.StatusBadRequest)
+		return
+	}
+
+	// Write file
+	err = os.WriteFile(path, []byte(req.JSONL), 0o644)
+	if err != nil {
+		http.Error(w, "failed to save scenario", http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "scenarioId": req.ScenarioID})
+}
+
+// GET /scenarios/list returns JSON array of scenarioIds
+func (h *Handler) scenarioList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	files, err := os.ReadDir(scenariosDataDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// empty list
+			_ = json.NewEncoder(w).Encode([]string{})
+			return
+		}
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	var ids []string
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+		name := f.Name()
+		ext := filepath.Ext(name)
+		if ext != ".jsonl" {
+			continue
+		}
+		id := name[:len(name)-len(ext)]
+		if !validScenarioID.MatchString(id) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+
+	_ = json.NewEncoder(w).Encode(ids)
 }
 
 type startReq struct {

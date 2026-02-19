@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"incident-replay/backend/internal/scenario"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -112,6 +115,8 @@ func (r *Run) MarkStopped() {
 	// Mark as stopped only if running
 	// Cancel the context if any
 	// Decrement active runs gauge on stop
+	gauge := promReplayRunsActive
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.State == StateRunning {
@@ -119,6 +124,7 @@ func (r *Run) MarkStopped() {
 		if r.cancel != nil {
 			r.cancel()
 		}
+		gauge.Dec()
 	}
 }
 
@@ -130,6 +136,7 @@ func (r *Run) MarkFailed() {
 	if r.cancel != nil {
 		r.cancel()
 	}
+	promReplayRunsActive.Dec()
 }
 
 // AddSample adds a latency sample and error flag to stats
@@ -238,6 +245,15 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	if params.Duration <= 0 {
 		return "", errors.New("duration must be > 0")
 	}
+	if strings.TrimSpace(params.ScenarioID) == "" {
+		return "", errors.New("scenarioId is required")
+	}
+
+	// Load scenario events
+	events, err := scenario.LoadScenario(params.ScenarioID)
+	if err != nil {
+		return "", fmt.Errorf("load scenario error: %w", err)
+	}
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
 
@@ -256,13 +272,19 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	// update active runs gauge
 	promReplayRunsActive.Inc()
 
-	go r.runLoad(ctx, run, params)
+	go r.runLoad(ctx, run, params, events)
 
 	return runID, nil
 }
 
-func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams) {
-	targetURL := strings.TrimRight(params.TargetBaseURL, "/") + "/debug/echo"
+func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, events []scenario.Event) {
+	baseURL := strings.TrimRight(params.TargetBaseURL, "/")
+
+	if len(events) == 0 {
+		// No events to run, mark failed and return
+		run.MarkFailed()
+		return
+	}
 
 	rps := params.RPS
 	dur := params.Duration
@@ -277,24 +299,51 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	randSrc := rand.NewSource(time.Now().UnixNano())
+	randGen := rand.New(randSrc)
+
+	eventsLen := len(events)
+
 	for {
 		select {
 		case <-ctx.Done():
 			run.MarkStopped()
-			// update active runs gauge
-			promReplayRunsActive.Dec()
 			return
 		case now := <-ticker.C:
 			if now.After(end) {
 				// Time exceeded stop run
 				run.MarkStopped()
-				promReplayRunsActive.Dec()
 				return
 			}
 
 			start := time.Now()
 
-			resp, err := r.httpClient.Get(targetURL)
+			// choose event weighted
+			ev := events[randGen.Intn(eventsLen)]
+
+			url := baseURL + ev.Path
+
+			var req *http.Request
+			var err error
+
+			if ev.Body != "" {
+				req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
+			} else {
+				req, err = http.NewRequest(ev.Method, url, nil)
+			}
+			if err != nil {
+				latencyMs := time.Since(start).Milliseconds()
+				run.AddSample(latencyMs, true)
+				promReplayErrorsTotal.Inc()
+				continue
+			}
+
+			// add headers
+			for k, v := range ev.Headers {
+				req.Header.Set(k, v)
+			}
+
+			resp, err := r.httpClient.Do(req)
 			latencyMs := time.Since(start).Milliseconds()
 
 			promReplayRequestDurationMs.Observe(float64(latencyMs))
@@ -335,6 +384,7 @@ func (r *Runner) Status(runID string) (Status, error) {
 	if strings.TrimSpace(runID) == "" {
 		return Status{}, errors.New("runId is required")
 	}
+
 	run, ok := r.GetRun(runID)
 	if !ok {
 		return Status{}, errors.New("run not found")
