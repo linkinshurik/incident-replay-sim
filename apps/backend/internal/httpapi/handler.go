@@ -26,6 +26,8 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/replay/stop", h.replayStop)
 	mux.HandleFunc("/replay/status", h.replayStatus)
 
+	mux.HandleFunc("/debug/echo", h.debugEcho)
+
 	return withJSON(withLogging(mux))
 }
 
@@ -45,6 +47,14 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	// заглушка v0 (пізніше замінимо на promhttp)
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = w.Write([]byte("# metrics v0 placeholder\n"))
+}
+
+func (h *Handler) debugEcho(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 }
 
 type startReq struct {
