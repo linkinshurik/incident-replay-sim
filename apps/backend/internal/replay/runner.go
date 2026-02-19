@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ReplayState represents the current state of a replay run
@@ -109,6 +111,7 @@ func NewRun(runID string) *Run {
 func (r *Run) MarkStopped() {
 	// Mark as stopped only if running
 	// Cancel the context if any
+	// Decrement active runs gauge on stop
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.State == StateRunning {
@@ -162,6 +165,42 @@ type Runner struct {
 	httpClient *http.Client
 }
 
+// Prometheus metrics for replay
+var (
+	promReplayRequestsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "replay_requests_total",
+			Help: "Total number of replay requests started.",
+		},
+	)
+	promReplayErrorsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "replay_errors_total",
+			Help: "Total number of errors occurred during replay.",
+		},
+	)
+	promReplayRunsActive = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "replay_runs_active",
+			Help: "Current number of active replay runs.",
+		},
+	)
+	promReplayRequestDurationMs = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "replay_request_duration_ms",
+			Help:    "Histogram of replay request durations in milliseconds.",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 10),
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(promReplayRequestsTotal)
+	prometheus.MustRegister(promReplayErrorsTotal)
+	prometheus.MustRegister(promReplayRunsActive)
+	prometheus.MustRegister(promReplayRequestDurationMs)
+}
+
 type StartParams struct {
 	ScenarioID    string
 	TargetBaseURL string
@@ -202,6 +241,9 @@ func (r *Runner) Start(params StartParams) (string, error) {
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
 
+	// update prometheus counter for requests
+	promReplayRequestsTotal.Inc()
+
 	// Create run and start the goroutine
 	run := NewRun(runID)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -210,6 +252,9 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	r.mu.Lock()
 	r.runs[runID] = run
 	r.mu.Unlock()
+
+	// update active runs gauge
+	promReplayRunsActive.Inc()
 
 	go r.runLoad(ctx, run, params)
 
@@ -236,11 +281,14 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams) {
 		select {
 		case <-ctx.Done():
 			run.MarkStopped()
+			// update active runs gauge
+			promReplayRunsActive.Dec()
 			return
 		case now := <-ticker.C:
 			if now.After(end) {
 				// Time exceeded stop run
 				run.MarkStopped()
+				promReplayRunsActive.Dec()
 				return
 			}
 
@@ -249,9 +297,12 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams) {
 			resp, err := r.httpClient.Get(targetURL)
 			latencyMs := time.Since(start).Milliseconds()
 
+			promReplayRequestDurationMs.Observe(float64(latencyMs))
+
 			if err != nil {
 				// Record error sample
 				run.AddSample(0, true)
+				promReplayErrorsTotal.Inc()
 				continue
 			}
 
@@ -260,6 +311,7 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams) {
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				// Non 2xx status
 				run.AddSample(latencyMs, true)
+				promReplayErrorsTotal.Inc()
 				continue
 			}
 
@@ -329,6 +381,10 @@ func (r *Runner) StopRun(runID string) bool {
 		return false
 	}
 	run.MarkStopped()
+
+	// update active runs gauge
+	promReplayRunsActive.Dec()
+
 	return true
 }
 
