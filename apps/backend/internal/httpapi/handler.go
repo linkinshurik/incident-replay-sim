@@ -6,7 +6,12 @@ import (
 	"time"
 
 	"incident-replay/backend/internal/replay"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+// Removed duplicate prometheus metrics registration from here.
+// Metrics registration is done in internal/replay/runner.go
 
 type Handler struct {
 	runner *replay.Runner
@@ -20,7 +25,7 @@ func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", h.healthz)
-	mux.HandleFunc("/metrics", h.metrics)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	mux.HandleFunc("/replay/start", h.replayStart)
 	mux.HandleFunc("/replay/stop", h.replayStop)
@@ -37,31 +42,6 @@ func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-}
-
-func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	// заглушка v0 (пізніше замінимо на promhttp)
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = w.Write([]byte("# metrics v0 placeholder\n"))
-}
-
-func (h *Handler) debugEcho(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-}
-
-type startReq struct {
-	ScenarioID    string `json:"scenarioId"`
-	TargetBaseURL string `json:"targetBaseUrl"`
-	RPS           int    `json:"rps"`
-	DurationSec   int    `json:"durationSec"`
 }
 
 func (h *Handler) replayStart(w http.ResponseWriter, r *http.Request) {
@@ -91,10 +71,6 @@ func (h *Handler) replayStart(w http.ResponseWriter, r *http.Request) {
 		"runId":  runID,
 		"status": "started",
 	})
-}
-
-type stopReq struct {
-	RunID string `json:"runId"`
 }
 
 func (h *Handler) replayStop(w http.ResponseWriter, r *http.Request) {
@@ -138,4 +114,23 @@ func (h *Handler) replayStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(st)
+}
+
+func (h *Handler) debugEcho(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
+type startReq struct {
+	ScenarioID    string `json:"scenarioId"`
+	TargetBaseURL string `json:"targetBaseUrl"`
+	RPS           int    `json:"rps"`
+	DurationSec   int    `json:"durationSec"`
+}
+
+type stopReq struct {
+	RunID string `json:"runId"`
 }
