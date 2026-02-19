@@ -16,41 +16,56 @@ function ensureDir(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
+function parseArgs(argv) {
+  const args = argv.slice(2);
+  let role = "backend";
+
+  const roleIdx = args.indexOf("--role");
+  if (roleIdx !== -1) {
+    role = (args[roleIdx + 1] || "").trim();
+    args.splice(roleIdx, 2);
+  }
+
+  const task = args.join(" ").trim();
+  return { role, task };
+}
+
 function repoContext() {
   const files = sh("git ls-files").split("\n").filter(Boolean);
-
-  // беремо тільки важливі доки (щоб не роздувати контекст)
-  const ctx = {
+  return {
     dod: readFileSafe("docs/dod.md"),
     arch: readFileSafe("docs/architecture.md"),
     api: readFileSafe("docs/api.md"),
     events: readFileSafe("docs/events.md"),
-    tree: files,
-    // додаємо існуючий docs/README.md, бо саме він часто конфліктує
     docsReadme: readFileSafe("docs/README.md"),
+    tree: files,
   };
-  return ctx;
 }
 
-const SYSTEM = `
+function rolePrompt(role) {
+  const p = `agent/prompts/${role}.md`;
+  return readFileSafe(p);
+}
+
+function systemPrompt(role) {
+  return `
 You are an implementation agent working in a monorepo.
 Return ONLY valid JSON. No markdown. No prose.
 
-JSON schema:
-{
-  "files": [
-    { "path": "relative/path", "content": "full file content" }
-  ]
-}
+You MUST follow the JSON schema provided by the caller (strict).
 
 Rules:
 - Overwrite file content exactly as provided (full content).
 - Keep changes minimal and scoped to the task.
 - Do not include secrets or tokens.
-- Ensure changes will not break "make ci".
-`;
+- Prefer small targeted changes; avoid rewriting large unrelated files.
 
-function USER(task, ctx) {
+Role instructions:
+${rolePrompt(role)}
+`.trim();
+}
+
+function userPrompt(task, ctx) {
   return `
 Task: ${task}
 
@@ -66,20 +81,25 @@ ${ctx.api}
 Events:
 ${ctx.events}
 
-Existing docs/README.md content (if any):
+Existing docs/README.md (if any):
 ${ctx.docsReadme}
 
 Repo file list:
 ${ctx.tree.join("\n")}
-
-Return JSON only.
-`;
+`.trim();
 }
 
 async function main() {
-  const task = process.argv.slice(2).join(" ").trim();
+  const { role, task } = parseArgs(process.argv);
+
   if (!task) {
-    console.error('Usage: node agent/runner/run.js "task description"');
+    console.error('Usage: node agent/runner/run.js --role <product|architect|backend|qa|review> "task"');
+    process.exit(1);
+  }
+
+  const allowed = new Set(["product", "architect", "backend", "qa", "review"]);
+  if (!allowed.has(role)) {
+    console.error(`Invalid role: ${role}. Allowed: ${Array.from(allowed).join(", ")}`);
     process.exit(1);
   }
 
@@ -90,7 +110,7 @@ async function main() {
   }
 
   // create branch
-  const safe = task.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
+  const safe = `${role}-${task}`.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
   const branch = `agent/${safe}-${Date.now()}`;
   must(`git checkout -b ${branch}`);
 
@@ -99,25 +119,50 @@ async function main() {
 
   const resp = await client.responses.create({
     model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
-    max_output_tokens: 2000,
+    max_output_tokens: 8000,
     input: [
-      { role: "system", content: SYSTEM },
-      { role: "user", content: USER(task, ctx) },
+      { role: "system", content: systemPrompt(role) },
+      { role: "user", content: userPrompt(task, ctx) },
     ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "file_writes",
+        strict: true,
+        schema: {
+          type: "object",
+          additionalProperties: false,
+          required: ["files"],
+          properties: {
+            files: {
+              type: "array",
+              minItems: 1,
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["path", "content"],
+                properties: {
+                  path: { type: "string" },
+                  content: { type: "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+
   });
 
-  const text = resp.output_text?.trim();
-  if (!text) {
-    console.error("Empty model output");
-    process.exit(1);
-  }
+  const text = (resp.output_text || "").trim();
+  fs.writeFileSync(".agent.raw.json", text, "utf-8");
 
   let obj;
   try {
     obj = JSON.parse(text);
-  } catch (e) {
-    console.error("Model did not return valid JSON. Output was:");
-    console.error(text);
+  } catch {
+    console.error("Model did not return valid JSON. Raw saved to .agent.raw.json");
+    console.error(text.slice(0, 500));
     process.exit(1);
   }
 
@@ -127,7 +172,6 @@ async function main() {
     process.exit(1);
   }
 
-  // write files
   for (const f of obj.files) {
     if (!f.path || typeof f.path !== "string" || typeof f.content !== "string") {
       console.error("Bad file entry:", f);
@@ -141,7 +185,6 @@ async function main() {
     fs.writeFileSync(f.path, f.content, "utf-8");
   }
 
-  // gates
   try {
     must("make ci");
   } catch {
@@ -150,11 +193,10 @@ async function main() {
   }
 
   must("git add -A");
-  must(`git commit -m "agent: ${task}"`);
+  must(`git commit -m "agent(${role}): ${task}"`);
 
   console.log(`OK. Branch created: ${branch}`);
-  console.log("Next:");
-  console.log(`  git push -u origin ${branch}`);
+  console.log(`Next: git push -u origin ${branch}`);
 }
 
 main().catch((e) => {
