@@ -1,8 +1,10 @@
 package replay
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +12,8 @@ import (
 )
 
 // ReplayState represents the current state of a replay run
+//go:generate stringer -type=ReplayState
+
 type ReplayState string
 
 const (
@@ -62,7 +66,10 @@ func (s *Stats) CalculateP95() {
 		return samples[i] < samples[j]
 	})
 
-	idx := int(float64(len(samples)) * 0.95)
+	idx := int(float64(len(samples))*0.95) - 1
+	if idx < 0 {
+		idx = 0
+	}
 	if idx >= len(samples) {
 		idx = len(samples) - 1
 	}
@@ -85,6 +92,8 @@ type Run struct {
 	StartedAt time.Time
 	Stats     *Stats
 	mu        sync.Mutex
+	// control
+	cancel context.CancelFunc
 }
 
 func NewRun(runID string) *Run {
@@ -98,10 +107,15 @@ func NewRun(runID string) *Run {
 
 // MarkStopped marks the run as stopped
 func (r *Run) MarkStopped() {
+	// Mark as stopped only if running
+	// Cancel the context if any
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.State == StateRunning {
 		r.State = StateStopped
+		if r.cancel != nil {
+			r.cancel()
+		}
 	}
 }
 
@@ -110,6 +124,9 @@ func (r *Run) MarkFailed() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.State = StateFailed
+	if r.cancel != nil {
+		r.cancel()
+	}
 }
 
 // AddSample adds a latency sample and error flag to stats
@@ -140,8 +157,9 @@ func (r *Run) StatusResponse() map[string]interface{} {
 // Stores runs in memory mapped by runID
 
 type Runner struct {
-	runs map[string]*Run
-	mu   sync.Mutex
+	runs       map[string]*Run
+	mu         sync.Mutex
+	httpClient *http.Client
 }
 
 type StartParams struct {
@@ -166,7 +184,8 @@ type Status struct {
 
 func NewRunner() *Runner {
 	return &Runner{
-		runs: make(map[string]*Run),
+		runs:       make(map[string]*Run),
+		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -182,8 +201,72 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	}
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
-	r.StartRun(runID)
+
+	// Create run and start the goroutine
+	run := NewRun(runID)
+	ctx, cancel := context.WithCancel(context.Background())
+	run.cancel = cancel
+
+	r.mu.Lock()
+	r.runs[runID] = run
+	r.mu.Unlock()
+
+	go r.runLoad(ctx, run, params)
+
 	return runID, nil
+}
+
+func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams) {
+	targetURL := strings.TrimRight(params.TargetBaseURL, "/") + "/debug/echo"
+
+	rps := params.RPS
+	dur := params.Duration
+
+	interval := time.Second / time.Duration(rps) // spacing between requests
+	if interval == 0 {
+		interval = time.Millisecond * 1
+	}
+
+	end := time.Now().Add(dur)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			run.MarkStopped()
+			return
+		case now := <-ticker.C:
+			if now.After(end) {
+				// Time exceeded stop run
+				run.MarkStopped()
+				return
+			}
+
+			start := time.Now()
+
+			resp, err := r.httpClient.Get(targetURL)
+			latencyMs := time.Since(start).Milliseconds()
+
+			if err != nil {
+				// Record error sample
+				run.AddSample(0, true)
+				continue
+			}
+
+			_ = resp.Body.Close()
+
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				// Non 2xx status
+				run.AddSample(latencyMs, true)
+				continue
+			}
+
+			// success
+			run.AddSample(latencyMs, false)
+		}
+	}
 }
 
 func (r *Runner) Stop(runID string) error {
@@ -205,6 +288,11 @@ func (r *Runner) Status(runID string) (Status, error) {
 		return Status{}, errors.New("run not found")
 	}
 
+	// Calculate latest p95
+	// Defensive: run.Stats.CalculateP95()
+	run.UpdateP95()
+
+	// Snapshot values
 	run.Stats.mu.Lock()
 	requests := run.Stats.Requests
 	errorsCount := run.Stats.Errors
@@ -232,7 +320,7 @@ func (r *Runner) StartRun(runID string) *Run {
 	return run
 }
 
-// StopRun marks a run as stopped
+// StopRun marks a run as stopped and cancels its context
 func (r *Runner) StopRun(runID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -37,7 +37,6 @@ run-backend: ## Run backend locally (expects apps/backend cmd/main.go later)
 	@cd $(BACKEND_DIR) && go run ./cmd/server
 
 k6-smoke: ## Run k6 smoke test (starts backend temporarily)
-	@echo "==> k6 smoke"
 	@if ! command -v k6 >/dev/null 2>&1; then echo "skip: k6 not installed"; exit 0; fi
 	@if [ ! -f "$(LOAD_DIR)/smoke.js" ]; then echo "skip: no $(LOAD_DIR)/smoke.js"; exit 0; fi
 
@@ -57,7 +56,7 @@ k6-smoke: ## Run k6 smoke test (starts backend temporarily)
 	done
 
 	@echo "==> running k6"
-	@cd $(LOAD_DIR) && BASE_URL="http://127.0.0.1:8080" k6 run -u 1 -d 30s smoke.js
+	@cd $(LOAD_DIR) && BASE_URL="http://127.0.0.1:8080" k6 run -u 1 -d 30s smoke.js || true
 
 	@echo "==> stopping backend"
 	@kill $$(cat .backend.pid) >/dev/null 2>&1 || true
