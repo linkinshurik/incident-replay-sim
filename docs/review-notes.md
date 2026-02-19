@@ -1,21 +1,11 @@
-# Review Notes: Gaps Against Definition of Done (DoD)
+# Review Notes: Replay Runner Implementation
 
-## Current Review for `GET /debug/echo` endpoint addition
+- The implementation of the replay runner correctly starts a goroutine that sends HTTP GET requests to `{targetBaseUrl}/debug/echo` at the configured RPS for the specified duration.
+- Statistics (request count, errors, p95 latency) are collected concurrently with proper locking, and exposed via the `/replay/status` endpoint as specified in `docs/api.md`.
+- The API shape and behavior match the documentation for `/replay/start`, `/replay/stop`, and `/replay/status` endpoints.
+- Unit tests added cover validation errors on start parameters, lifecycle transitions (start, stop, status), concurrency safety of stats updates, and calculation of latency p95 percentile.
+- Code formatting, linting, and build steps pass successfully per CI logs.
+- The new `/debug/echo` endpoint exists and returns expected JSON, but is not documented in `docs/api.md`. Consider adding this endpoint to the docs for completeness in a future update.
+- No critical issues found that would block acceptance; implementation meets the Definition of Done for the stated task.
 
-- The new `/debug/echo` endpoint is added and returns HTTP 200 with JSON `{"ok":true}` as required.
-- Endpoint uses GET method with proper method checks and JSON response encoding.
-- Related API docs files (`docs/api.md`) do not include `/debug/echo` endpoint; consider adding it for completeness.
-- Code formatting, linting, and build steps appear clean and unchanged.
-- Makefile and smoke test files unchanged except minor fixes.
-- Existing tests and smoke test do not cover `/debug/echo`; adding minimal test coverage recommended in future.
-- No updates to README or main docs mention new debug endpoint; optional but recommended for discovery.
-
----
-
-### Summary
-The changes meet the minimum requirements of the task. Minor improvements can be to: 
-- Document the new `/debug/echo` endpoint in `docs/api.md`.
-- Add minimal test coverage for the new endpoint.
-- Optionally update frontend/backend README with new endpoint description if relevant.
-
-Overall: ACCEPTABLE as is for task scope; recommend documentation update in next iteration.
+Summary: ACCEPTABLE as is. Recommend documenting `/debug/echo` and optionally adding minimal tests for it in next iteration.
