@@ -12,20 +12,40 @@ export const options = {
 };
 
 export default function () {
-  const h = http.get(`${BASE_URL}/healthz`);
-  check(h, { "healthz 200": (r) => r.status === 200 });
+  // Prepare scenario events with timestamps: now, now+1s, now+2s
+  const now = new Date();
+  const events = [
+    { ts: now.toISOString(), method: "GET", path: "/debug/echo" },
+    { ts: new Date(now.getTime() + 1000).toISOString(), method: "GET", path: "/debug/echo" },
+    { ts: new Date(now.getTime() + 2000).toISOString(), method: "GET", path: "/debug/echo" },
+  ];
 
-  // Start replay with targetBaseUrl http://127.0.0.1:8080, rps 5, durationSec 5
+  // Upload scenario with 3 events
+  const scenarioId = "smoke-upload";
+  const jsonl = events.map(e => JSON.stringify({ ts: e.ts, type: "http", method: e.method, path: e.path })).join("\n");
+  const uploadPayload = JSON.stringify({ scenarioId, jsonl });
+
+  const uploadRes = http.post(`${BASE_URL}/scenarios/upload`, uploadPayload, { headers: { "Content-Type": "application/json" } });
+  check(uploadRes, { "/scenarios/upload 200": (r) => r.status === 200 });
+  if (uploadRes.status !== 200) {
+    return;
+  }
+
+  // Start replay with mode=timestamp, speed=100, maxDelayMs=0 to avoid waiting
   const startPayload = JSON.stringify({
-    scenarioId: "smoke-test",
-    targetBaseUrl: "http://127.0.0.1:8080",
-    rps: 5,
-    durationSec: 5
+    scenarioId,
+    targetBaseUrl: BASE_URL,
+    rps: 1000, // high RPS to avoid waiting, or could be 5 anyway
+    durationSec: 10,
+    mode: "timestamp",
+    speed: 100,
+    maxDelayMs: 0,
+    startFromTs: events[0].ts,
+    endAtTs: events[events.length - 1].ts,
   });
 
   const startRes = http.post(`${BASE_URL}/replay/start`, startPayload, { headers: { "Content-Type": "application/json" } });
   check(startRes, { "/replay/start 200": (r) => r.status === 200 });
-
   if (startRes.status !== 200) {
     return;
   }
@@ -39,6 +59,7 @@ export default function () {
   }
 
   // Poll /replay/status until state != running
+  let requests = 0;
   while (true) {
     const statusRes = http.get(`${BASE_URL}/replay/status?runId=${runId}`);
     if (!check(statusRes, { "/replay/status 200": (r) => r.status === 200 })) {
@@ -49,11 +70,17 @@ export default function () {
     try {
       const statusData = statusRes.json();
       state = statusData.state || "";
+      requests = (statusData.stats && statusData.stats.requests) || 0;
     } catch (e) {
       break;
     }
 
     if (state !== "running") {
+      // Assert requests > 0 and state != running
+      check({ requests, state }, {
+        "requests > 0": (obj) => obj.requests > 0,
+        "state != running": (obj) => obj.state !== "running",
+      });
       break;
     }
 
