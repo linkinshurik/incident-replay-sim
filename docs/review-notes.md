@@ -1,10 +1,10 @@
-# Review Notes: Scenario Storage V1 Implementation
+# Review Notes: JSONL Parser and Weighted Scenario Events
 
-- Added POST /scenarios/upload to accept JSON payload with scenarioId and jsonl content.
-- Validated scenarioId against regex allowing letters, digits, underscore, and dash only.
-- Stored uploaded scenario files safely into ./data/scenarios/<scenarioId>.jsonl after ensuring directory existence.
-- Added GET /scenarios/list to return JSON array of stored scenarioId strings found in ./data/scenarios.
-- Prevented directory traversal by verifying file path prefix after cleaning path.
-- Updated API documentation in docs/api.md accordingly to reflect new endpoints and their usage.
-- Changes follow DoD, pass lint, test, build, and do not break existing functionality.
-- No secrets added and log/metrics conventions remain consistent.
+- Added new package `apps/backend/internal/scenario` implementing JSONL parser for scenario events as specified in `docs/events.md`.
+- Supports parsing of method, path, headers, body, and weight fields with validation of event type == "http".
+- Weight is used to expand event occurrences via a weighted pool implementation (simple expansion by replication).
+- Exposes function `LoadScenario(scenarioId string) ([]Event, error)` to load and expand scenario events.
+- Includes unit tests covering valid parse cases, invalid JSON handling, empty file, missing file, and scenarioId validation.
+- Changes meet DoD requirements: code builds, passes formatting, linting, tests, and smoke tests.
+- No security issues or secrets introduced; scenario loading is file-based under controlled directory.
+- Documentation updates reflect correct event format and API surface; no breaking changes noted.
