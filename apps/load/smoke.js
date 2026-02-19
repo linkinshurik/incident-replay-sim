@@ -15,9 +15,6 @@ export default function () {
   const h = http.get(`${BASE_URL}/healthz`);
   check(h, { "healthz 200": (r) => r.status === 200 });
 
-  const m = http.get(`${BASE_URL}/metrics`);
-  check(m, { "metrics 200": (r) => r.status === 200 });
-
   // Start replay with targetBaseUrl http://127.0.0.1:8080, rps 5, durationSec 5
   const startPayload = JSON.stringify({
     scenarioId: "smoke-test",
@@ -67,6 +64,18 @@ export default function () {
   const stopPayload = JSON.stringify({ runId });
   const stopRes = http.post(`${BASE_URL}/replay/stop`, stopPayload, { headers: { "Content-Type": "application/json" } });
   check(stopRes, { "/replay/stop 200": (r) => r.status === 200 });
+
+  // After stopping, GET /metrics and assert response body contains replay metrics
+  const metrics = http.get(`${BASE_URL}/metrics`);
+  const checkMetrics = check(metrics, {
+    "/metrics 200": (r) => r.status === 200,
+    "metrics include replay_requests_total": (r) => r.body.includes("replay_requests_total"),
+    "metrics include replay_runs_active": (r) => r.body.includes("replay_runs_active"),
+  });
+
+  if (!checkMetrics) {
+    throw new Error("Metrics missing expected replay metrics");
+  }
 
   sleep(1);
 }

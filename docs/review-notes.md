@@ -1,9 +1,8 @@
-# Review Notes: Fix for Duplicate Prometheus Metric Registration Panic
+# Review Notes: Smoke Test Update for /metrics Endpoint
 
-- Fixed panic caused by duplicate Prometheus metrics collector registration by removing duplicate registration from httpapi/handler.go.
-- Metrics registration is now centralized in internal/replay/runner.go with proper prometheus.MustRegister calls in init().
-- Updated handler.go to use promhttp.Handler() directly without explicit redundant registration.
-- Added prometheus metrics for replay requests, errors, active runs, and request durations.
-- The fix prevents runtime panic on backend start, ensuring stable metric exposition.
-- Confirmed that all DoD gates pass and observability endpoints `/metrics` and `/healthz` work correctly.
-- The changes maintain minimal scope addressing only metric registration conflicts as per best practices.
+- Updated smoke.js to call GET /metrics after replay start and stop sequence.
+- Added assertions to ensure response body includes 'replay_requests_total' and 'replay_runs_active' metrics.
+- Removed redundant initial check of /metrics before replay start to keep test stable and focused.
+- The smoke test flow waits for replay to complete by polling /replay/status, then stops and validates metrics.
+- Changes comply with DoD: test passes in CI, no lint/format issues, no secret exposure.
+- This enhances observability test coverage by verifying critical metrics exposure post replay runs.
