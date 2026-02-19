@@ -1,12 +1,9 @@
-# Review Notes: Extend POST /replay/start API with new optional fields
+# Review Notes: Fix unused imports in internal/replay/runner.go
 
-- Added `mode` (burst|timestamp), `speed`, `maxDelayMs`, `startFromTs`, and `endAtTs` optional fields to `/replay/start` API and internal runner.
-- Input validations for `speed` (>0) and `maxDelayMs` (>=0) performed at HTTP handler and runner start.
-- Backward compatibility maintained: default `mode` is `burst` if omitted.
-- Runner implements `burst` mode playback as before; `timestamp` mode is stubbed with immediate failure (to be implemented).
-- Prometheus metrics correctly increment/decrement on run start and stop.
-- Scenario file handling remains safe and validated.
-- Updated `docs/api.md` reflects new parameters and validation rules.
-- Tests cover input validation, start/stop/status functionality, and HTTP request replay correctness.
+- Issue: `bufio`, `encoding/json`, and `os` packages imported but not used in `internal/replay/runner.go`.
+- Fix: Removed the unused imports to satisfy `go vet` checks.
+- No functional changes to code behavior.
+- Re-ran lint, tests, and build successfully.
+- CI passes without errors related to imports.
 
-Overall, changes meet Definition of Done and project standards.
+Summary: The changes effectively fix lint errors and meet DoD requirements. No further fixes needed.

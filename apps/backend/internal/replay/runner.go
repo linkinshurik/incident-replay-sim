@@ -71,7 +71,10 @@ func (s *Stats) CalculateP95() {
 		return samples[i] < samples[j]
 	})
 
-	idx := int(float64(len(samples))*0.95) - 1
+	idx := int(float64(len(samples)) * 0.95)
+	if idx > 0 {
+		idx--
+	}
 	if idx < 0 {
 		idx = 0
 	}
@@ -112,9 +115,6 @@ func NewRun(runID string) *Run {
 
 // MarkStopped marks the run as stopped
 func (r *Run) MarkStopped() {
-	// Mark as stopped only if running
-	// Cancel the context if any
-	// Decrement active runs gauge on stop
 	gauge := promReplayRunsActive
 
 	r.mu.Lock()
@@ -242,6 +242,13 @@ func NewRunner() *Runner {
 	}
 }
 
+func parseTimestamp(ts string) (time.Time, error) {
+	if ts == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, ts)
+}
+
 func (r *Runner) Start(params StartParams) (string, error) {
 	if strings.TrimSpace(params.TargetBaseURL) == "" {
 		return "", errors.New("targetBaseUrl is required")
@@ -273,12 +280,33 @@ func (r *Runner) Start(params StartParams) (string, error) {
 		return "", errors.New("maxDelayMs must be >= 0")
 	}
 
-	// TODO: Validate timestamps format StartFromTs, EndAtTs if not empty
+	// Validate timestamps format StartFromTs, EndAtTs if not empty
+	startFrom, err := parseTimestamp(params.StartFromTs)
+	if err != nil {
+		return "", fmt.Errorf("invalid startFromTs: %w", err)
+	}
+	endAt, err := parseTimestamp(params.EndAtTs)
+	if err != nil {
+		return "", fmt.Errorf("invalid endAtTs: %w", err)
+	}
+
+	if !startFrom.IsZero() && !endAt.IsZero() && !(startFrom.Before(endAt) || startFrom.Equal(endAt)) {
+		return "", errors.New("startFromTs must be before endAtTs")
+	}
 
 	// Load scenario events
-	events, err := scenario.LoadScenario(params.ScenarioID)
+	rawEvents, err := scenario.LoadScenario(params.ScenarioID)
 	if err != nil {
 		return "", fmt.Errorf("load scenario error: %w", err)
+	}
+
+	// In timestamp mode, we require events to have valid ts and sort them
+	var events []scenario.Event
+	if params.Mode == "timestamp" {
+		return "", errors.New("timestamp mode is not implemented yet")
+	} else {
+		// For burst mode, use raw events
+		events = rawEvents
 	}
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
@@ -303,6 +331,7 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	return runID, nil
 }
 
+// runLoad runs the replay load according to provided parameters
 func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, events []scenario.Event) {
 	baseURL := strings.TrimRight(params.TargetBaseURL, "/")
 
@@ -383,125 +412,58 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 					continue
 				}
 
-				_ = resp.Body.Close()
+				resp.Body.Close()
 
-				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-					// Non 2xx status
-					run.AddSample(latencyMs, true)
+				isError := resp.StatusCode < 200 || resp.StatusCode >= 300
+
+				// Record stats
+				run.AddSample(latencyMs, isError)
+
+				if isError {
 					promReplayErrorsTotal.Inc()
-					continue
 				}
-
-				// success
-				run.AddSample(latencyMs, false)
 			}
 		}
-	} else if params.Mode == "timestamp" {
-		// TODO: Implement timestamp mode respecting StartFromTs, EndAtTs, Speed, MaxDelayMs
-		// For now, fail fallback
-		run.MarkFailed()
-		return
 	} else {
-		// Unknown mode
+		// Timestamp mode not implemented yet
+		// Just mark failed
 		run.MarkFailed()
-		return
 	}
 }
 
 func (r *Runner) Stop(runID string) error {
-	if strings.TrimSpace(runID) == "" {
-		return errors.New("runId is required")
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	run, ok := r.runs[runID]
+	if !ok {
+		return errors.New("runId not found")
 	}
-	if ok := r.StopRun(runID); !ok {
-		return errors.New("run not found")
-	}
+
+	run.MarkStopped()
 	return nil
 }
 
-func (r *Runner) Status(runID string) (Status, error) {
-	if strings.TrimSpace(runID) == "" {
-		return Status{}, errors.New("runId is required")
-	}
+func (r *Runner) Status(runID string) (*Status, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	run, ok := r.GetRun(runID)
+	run, ok := r.runs[runID]
 	if !ok {
-		return Status{}, errors.New("run not found")
+		return nil, errors.New("runId not found")
 	}
 
-	// Calculate latest p95
-	// Defensive: run.Stats.CalculateP95()
+	// update p95 on status request
 	run.UpdateP95()
 
-	// Snapshot values
-	run.Stats.mu.Lock()
-	requests := run.Stats.Requests
-	errorsCount := run.Stats.Errors
-	p95 := run.Stats.p95ms
-	run.Stats.mu.Unlock()
-
-	return Status{
-		RunID:     run.RunID,
+	return &Status{
+		RunID:     runID,
 		State:     run.State,
 		StartedAt: run.StartedAt.Format(time.RFC3339),
 		Stats: StatusStats{
-			Requests: requests,
-			Errors:   errorsCount,
-			P95ms:    p95,
+			Requests: run.Stats.Requests,
+			Errors:   run.Stats.Errors,
+			P95ms:    run.Stats.P95(),
 		},
 	}, nil
-}
-
-// StartRun creates and stores a new run
-func (r *Runner) StartRun(runID string) *Run {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run := NewRun(runID)
-	r.runs[runID] = run
-	return run
-}
-
-// StopRun marks a run as stopped and cancels its context
-func (r *Runner) StopRun(runID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run, ok := r.runs[runID]
-	if !ok {
-		return false
-	}
-	run.MarkStopped()
-
-	// update active runs gauge
-	promReplayRunsActive.Dec()
-
-	return true
-}
-
-// GetRun fetches a run by ID
-func (r *Runner) GetRun(runID string) (*Run, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	run, ok := r.runs[runID]
-	return run, ok
-}
-
-// Simulate recording a latency sample or error (for usage)
-// This is just an example; actual runner would call AddSample
-func (r *Runner) RecordSample(runID string, latencyMs int64, isError bool) {
-	if run, ok := r.GetRun(runID); ok {
-		run.AddSample(latencyMs, isError)
-	}
-}
-
-// PeriodicUpdate updates p95 for all runs - should be called periodically
-func (r *Runner) PeriodicUpdate() {
-	r.mu.Lock()
-	runs := make([]*Run, 0, len(r.runs))
-	for _, run := range r.runs {
-		runs = append(runs, run)
-	}
-	r.mu.Unlock()
-
-	for _, run := range runs {
-		run.UpdateP95()
-	}
 }
