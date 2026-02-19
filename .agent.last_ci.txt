@@ -122,7 +122,7 @@ running (0m29.0s), 1/1 VUs, 4 complete and 0 interrupted iterations
 default   [  97% ] 1 VUs  29.0s/30s
 
 running (0m30.0s), 1/1 VUs, 4 complete and 0 interrupted iterations
-default   [ 100% ] 1 VUs  30.0s/30s
+default ↓ [ 100% ] 1 VUs  30s
 
 
   █ THRESHOLDS 
@@ -133,7 +133,7 @@ default   [ 100% ] 1 VUs  30.0s/30s
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 60      1.994211/s
+    checks_total.......: 60      1.992051/s
     checks_succeeded...: 100.00% 60 out of 60
     checks_failed......: 0.00%   0 out of 60
 
@@ -146,14 +146,14 @@ default   [ 100% ] 1 VUs  30.0s/30s
     ✓ metrics include replay_runs_active
 
     HTTP
-    http_req_duration..............: avg=1.13ms min=152µs med=446.5µs max=18.92ms p(90)=1ms   p(95)=1.27ms
-      { expected_response:true }...: avg=1.13ms min=152µs med=446.5µs max=18.92ms p(90)=1ms   p(95)=1.27ms
+    http_req_duration..............: avg=804.02µs min=244µs med=806µs max=1.74ms p(90)=1.17ms p(95)=1.26ms
+      { expected_response:true }...: avg=804.02µs min=244µs med=806µs max=1.74ms p(90)=1.17ms p(95)=1.26ms
     http_req_failed................: 0.00%  0 out of 50
-    http_reqs......................: 50     1.661843/s
+    http_reqs......................: 50     1.660042/s
 
     EXECUTION
-    iteration_duration.............: avg=6.01s  min=6s    med=6.01s   max=6.04s   p(90)=6.03s p(95)=6.03s 
-    iterations.....................: 5      0.166184/s
+    iteration_duration.............: avg=6.02s    min=6.01s med=6.01s max=6.06s  p(90)=6.04s  p(95)=6.05s 
+    iterations.....................: 5      0.166004/s
     vus............................: 1      min=1       max=1
     vus_max........................: 1      min=1       max=1
 

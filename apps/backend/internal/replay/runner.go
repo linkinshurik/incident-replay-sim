@@ -213,6 +213,13 @@ type StartParams struct {
 	TargetBaseURL string
 	RPS           int
 	Duration      time.Duration
+
+	// New optional fields
+	Mode        string  // burst|timestamp
+	Speed       float64 // >0
+	MaxDelayMs  int64   // >=0
+	StartFromTs string  // RFC3339 timestamp
+	EndAtTs     string  // RFC3339 timestamp
 }
 
 type StatusStats struct {
@@ -248,6 +255,25 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	if strings.TrimSpace(params.ScenarioID) == "" {
 		return "", errors.New("scenarioId is required")
 	}
+
+	if params.Mode == "" {
+		params.Mode = "burst"
+	}
+
+	// Validate mode
+	if params.Mode != "burst" && params.Mode != "timestamp" {
+		return "", errors.New("mode must be 'burst' or 'timestamp'")
+	}
+
+	if params.Speed != 0 && params.Speed <= 0 {
+		return "", errors.New("speed must be > 0")
+	}
+
+	if params.MaxDelayMs < 0 {
+		return "", errors.New("maxDelayMs must be >= 0")
+	}
+
+	// TODO: Validate timestamps format StartFromTs, EndAtTs if not empty
 
 	// Load scenario events
 	events, err := scenario.LoadScenario(params.ScenarioID)
@@ -289,84 +315,96 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 	rps := params.RPS
 	dur := params.Duration
 
-	interval := time.Second / time.Duration(rps) // spacing between requests
-	if interval == 0 {
-		interval = time.Millisecond * 1
-	}
+	if params.Mode == "burst" {
+		// Burst mode: send requests spaced by interval = 1/rps
+		interval := time.Second / time.Duration(rps) // spacing between requests
+		if interval == 0 {
+			interval = time.Millisecond * 1
+		}
 
-	end := time.Now().Add(dur)
+		end := time.Now().Add(dur)
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 
-	randSrc := rand.NewSource(time.Now().UnixNano())
-	randGen := rand.New(randSrc)
+		randSrc := rand.NewSource(time.Now().UnixNano())
+		randGen := rand.New(randSrc)
 
-	eventsLen := len(events)
+		eventsLen := len(events)
 
-	for {
-		select {
-		case <-ctx.Done():
-			run.MarkStopped()
-			return
-		case now := <-ticker.C:
-			if now.After(end) {
-				// Time exceeded stop run
+		for {
+			select {
+			case <-ctx.Done():
 				run.MarkStopped()
 				return
-			}
+			case now := <-ticker.C:
+				if now.After(end) {
+					// Time exceeded stop run
+					run.MarkStopped()
+					return
+				}
 
-			start := time.Now()
+				start := time.Now()
 
-			// choose event weighted
-			ev := events[randGen.Intn(eventsLen)]
+				// choose event weighted
+				ev := events[randGen.Intn(eventsLen)]
 
-			url := baseURL + ev.Path
+				url := baseURL + ev.Path
 
-			var req *http.Request
-			var err error
+				var req *http.Request
+				var err error
 
-			if ev.Body != "" {
-				req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
-			} else {
-				req, err = http.NewRequest(ev.Method, url, nil)
-			}
-			if err != nil {
+				if ev.Body != "" {
+					req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
+				} else {
+					req, err = http.NewRequest(ev.Method, url, nil)
+				}
+				if err != nil {
+					latencyMs := time.Since(start).Milliseconds()
+					run.AddSample(latencyMs, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				// add headers
+				for k, v := range ev.Headers {
+					req.Header.Set(k, v)
+				}
+
+				resp, err := r.httpClient.Do(req)
 				latencyMs := time.Since(start).Milliseconds()
-				run.AddSample(latencyMs, true)
-				promReplayErrorsTotal.Inc()
-				continue
+
+				promReplayRequestDurationMs.Observe(float64(latencyMs))
+
+				if err != nil {
+					// Record error sample
+					run.AddSample(0, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				_ = resp.Body.Close()
+
+				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+					// Non 2xx status
+					run.AddSample(latencyMs, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				// success
+				run.AddSample(latencyMs, false)
 			}
-
-			// add headers
-			for k, v := range ev.Headers {
-				req.Header.Set(k, v)
-			}
-
-			resp, err := r.httpClient.Do(req)
-			latencyMs := time.Since(start).Milliseconds()
-
-			promReplayRequestDurationMs.Observe(float64(latencyMs))
-
-			if err != nil {
-				// Record error sample
-				run.AddSample(0, true)
-				promReplayErrorsTotal.Inc()
-				continue
-			}
-
-			_ = resp.Body.Close()
-
-			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				// Non 2xx status
-				run.AddSample(latencyMs, true)
-				promReplayErrorsTotal.Inc()
-				continue
-			}
-
-			// success
-			run.AddSample(latencyMs, false)
 		}
+	} else if params.Mode == "timestamp" {
+		// TODO: Implement timestamp mode respecting StartFromTs, EndAtTs, Speed, MaxDelayMs
+		// For now, fail fallback
+		run.MarkFailed()
+		return
+	} else {
+		// Unknown mode
+		run.MarkFailed()
+		return
 	}
 }
 

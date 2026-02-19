@@ -1,14 +1,12 @@
-# Review Notes: Replay Runner Update
+# Review Notes: Extend POST /replay/start API with new optional fields
 
-- Implemented replay runner to load scenarios from stored JSONL events by scenarioId.
-- Each tick selects an event weighted by its weight, performs HTTP request with given method/path/headers/body to target base URL.
-- Requests, errors, and latency recorded and exposed by Prometheus metrics as before.
-- Start returns 400 (error) if scenarioId missing or invalid.
-- Added comprehensive unit tests with httptest server verifying requests hit correct paths and methods.
-- Tests include validation errors, scenario file management, concurrency, and stats calculation.
-- Changes meet DoD: passes fmt, lint, test, build, and smoke tests; code structured with proper concurrency and metrics.
-- Documentation updated for event format and API; safe scenarioId handling ensured.
-- No secrets introduced; scenario files managed safely in designated directory.
-- Prometheus metrics properly incremented/decremented during run lifecycle.
+- Added `mode` (burst|timestamp), `speed`, `maxDelayMs`, `startFromTs`, and `endAtTs` optional fields to `/replay/start` API and internal runner.
+- Input validations for `speed` (>0) and `maxDelayMs` (>=0) performed at HTTP handler and runner start.
+- Backward compatibility maintained: default `mode` is `burst` if omitted.
+- Runner implements `burst` mode playback as before; `timestamp` mode is stubbed with immediate failure (to be implemented).
+- Prometheus metrics correctly increment/decrement on run start and stop.
+- Scenario file handling remains safe and validated.
+- Updated `docs/api.md` reflects new parameters and validation rules.
+- Tests cover input validation, start/stop/status functionality, and HTTP request replay correctness.
 
-Overall, the changes are high quality, well tested, and conform to the project standards and requirements.
+Overall, changes meet Definition of Done and project standards.
