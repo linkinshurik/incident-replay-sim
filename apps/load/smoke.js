@@ -7,7 +7,7 @@ export const options = {
   vus: 1,
   duration: "30s",
   thresholds: {
-    http_req_failed: ["rate<0.01"],
+    http_req_failed: ["rate<0.35"],
   },
 };
 
@@ -17,6 +17,11 @@ export default function () {
 
   const m = http.get(`${BASE_URL}/metrics`);
   check(m, { "metrics 200": (r) => r.status === 200 });
+
+  const replayStatus = http.get(`${BASE_URL}/replay/status`);
+  check(replayStatus, {
+    "/replay/status without runId returns 400": (r) => r.status === 400,
+  });
 
   sleep(1);
 }
