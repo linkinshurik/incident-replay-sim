@@ -1,9 +1,10 @@
-# Review Notes: Update k6 smoke test and API handler for replay report and runs list
+# Review Notes: Runs Page Loading State Addition
 
-- Added new endpoints `/replay/report?runId=...` and `/replay/runs?limit=20` to backend HTTP handler with appropriate method checks and JSON responses.
-- `Runner` modified with `ListRuns` and `LoadReport` methods to load stored run reports from persistent storage and enrich active run information correctly.
-- `smoke.js` k6 test updated to upload a scenario, start replay, poll status, stop replay, and then assert that `/replay/report` returns expected JSON containing `runId` and that `/replay/runs` returns a non-empty runs list.
-- API docs updated to describe new `/replay/runs` and `/replay/report` endpoints with example responses.
-- Changes are minimal and align with DoD requirements: code builds, tests pass, lint/format checks pass, and k6 smoke test includes the assertions as requested.
-- No secrets or config changes; observability endpoints unchanged.
-- Overall changes improve observability and test coverage for replay run reports, enhancing usability and monitoring.
+- Added loading spinner and error display in the Runs React component while fetching replay runs.
+- Uses React useState and useEffect hooks for asynchronous fetch management.
+- Handles empty runs list by showing "No runs found." message.
+- Navigation to run report implemented via React Router's useNavigate.
+- Loading spinner and error messages have appropriate aria-label and CSS class.
+- Code structure and styling consistent with existing frontend implementation.
+
+The changes are minimal, focused on adding loading state UI to Runs page, and meet the Definition of Done criteria with no issues found.
