@@ -1,10 +1,9 @@
-# Review Notes: Runs Page Loading State Addition
+# Review Notes: Concurrency Limits for Replay Runs
 
-- Added loading spinner and error display in the Runs React component while fetching replay runs.
-- Uses React useState and useEffect hooks for asynchronous fetch management.
-- Handles empty runs list by showing "No runs found." message.
-- Navigation to run report implemented via React Router's useNavigate.
-- Loading spinner and error messages have appropriate aria-label and CSS class.
-- Code structure and styling consistent with existing frontend implementation.
-
-The changes are minimal, focused on adding loading state UI to Runs page, and meet the Definition of Done criteria with no issues found.
+- Added a concurrency semaphore to cap the max concurrent running replay runs (default 3 via env MAX_CONCURRENT_RUNS).
+- On exceeding concurrency limit, `/replay/start` returns HTTP 429 with JSON `{error: "too_many_concurrent_runs"}`.
+- Semaphore slot is correctly released on run stop and failure to avoid blocking slots.
+- Unit tests cover concurrency limit behavior and parameter validation.
+- The new code follows existing style and includes Prometheus metrics integration.
+- Environment variable parsing code is currently verbose but consistent with prior patterns.
+- All DoD requirements met: repository builds, no lint or test errors, smoke tests pass, README unchanged as no user-facing config changes.

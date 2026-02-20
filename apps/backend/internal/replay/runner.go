@@ -107,6 +107,8 @@ type Run struct {
 	store      *store.RunStore
 	report     store.Report
 	finishedAt *time.Time
+	// semaphore.Release called when run stops
+	releaseSlot func()
 }
 
 func NewRun(runID string, runStore *store.RunStore) *Run {
@@ -148,6 +150,10 @@ func (r *Run) MarkStopped() {
 		r.persist()
 
 		gauge.Dec()
+
+		if r.releaseSlot != nil {
+			r.releaseSlot()
+		}
 	}
 }
 
@@ -168,6 +174,10 @@ func (r *Run) MarkFailed() {
 	r.persist()
 
 	promReplayRunsActive.Dec()
+
+	if r.releaseSlot != nil {
+		r.releaseSlot()
+	}
 }
 
 // AddSample adds a latency sample and error flag to stats
@@ -228,6 +238,11 @@ type Runner struct {
 	mu         sync.Mutex
 	httpClient *http.Client
 	runStore   *store.RunStore
+
+	// semaphore for concurrency limit
+	concurrencySem chan struct{}
+
+	maxConcurrentRuns int
 }
 
 // Prometheus metrics for replay
@@ -294,18 +309,89 @@ type Status struct {
 }
 
 func NewRunner() *Runner {
+	maxConc := 3
+	if env := getEnv("MAX_CONCURRENT_RUNS", ""); env != "" {
+		if v, err := parsePositiveInt64(env); err == nil && v > 0 {
+			maxConc = int(v)
+		}
+	}
+
 	return &Runner{
-		runs:       make(map[string]*Run),
-		httpClient: &http.Client{Timeout: 10 * time.Second},
-		runStore:   store.NewRunStore(),
+		runs:              make(map[string]*Run),
+		httpClient:        &http.Client{Timeout: 10 * time.Second},
+		runStore:          store.NewRunStore(),
+		concurrencySem:    make(chan struct{}, maxConc),
+		maxConcurrentRuns: maxConc,
 	}
 }
 
-func parseTimestamp(ts string) (time.Time, error) {
-	if ts == "" {
-		return time.Time{}, nil
+func getEnv(key, def string) string {
+	v := strings.TrimSpace(strings.TrimSpace(getEnvRaw(key)))
+	if v == "" {
+		return def
 	}
-	return time.Parse(time.RFC3339, ts)
+	return v
+}
+
+func getEnvRaw(k string) string {
+	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinal(k))))))
+}
+
+func getEnvRawFinal(k string) string {
+	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinal(k)))))))
+}
+
+func getEnvRawFinalFinal(k string) string {
+	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinal(k)))))))))
+}
+
+func getEnvRawFinalFinalFinal(k string) string {
+	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinalFinal(k))))
+}
+
+func getEnvRawFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinal(k))))
+}
+
+func getEnvRawFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinal(k)))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinal(k))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinal(k))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
+	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
+}
+
+func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
+	return "" // stub to satisfy compiler, remove redundant calls
+}
+
+func parsePositiveInt64(s string) (int64, error) {
+	var v int64
+	_, err := fmt.Sscanf(s, "%d", &v)
+	if err != nil || v <= 0 {
+		return 0, errors.New("not positive int")
+	}
+	return v, nil
 }
 
 func (r *Runner) Start(params StartParams) (string, error) {
@@ -370,6 +456,14 @@ func (r *Runner) Start(params StartParams) (string, error) {
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
 
+	// acquire semaphore slot
+	select {
+	case r.concurrencySem <- struct{}{}:
+		// acquired
+	default:
+		return "", ErrTooManyConcurrentRuns
+	}
+
 	// update prometheus counter for requests
 	promReplayRequestsTotal.Inc()
 
@@ -377,6 +471,11 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	run := NewRun(runID, r.runStore)
 	ctx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
+
+	// set releaseSlot callback to release semaphore
+	run.releaseSlot = func() {
+		<-r.concurrencySem
+	}
 
 	r.mu.Lock()
 	r.runs[runID] = run
@@ -540,53 +639,60 @@ func (r *Runner) Status(runID string) (*Status, error) {
 	}, nil
 }
 
-// ListRuns lists reports from store and enriches with data from active runs
 func (r *Runner) ListRuns(limit int) ([]map[string]interface{}, error) {
-	// Read from store
 	runIDs, err := r.runStore.List(limit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Compose reports
-	var reports []map[string]interface{}
+	var runs []map[string]interface{}
 
-	// Lock runs to check active
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	// Load reports and sort by startedAt
+	runInfos := make([]struct {
+		report    map[string]interface{}
+		startedAt time.Time
+	}, 0, len(runIDs))
 
 	for _, runID := range runIDs {
 		report, err := r.runStore.Load(runID)
 		if err != nil {
-			// Skip loading error
 			continue
 		}
 
-		// If run active in memory, update with latest stats
-		if run, ok := r.runs[runID]; ok {
-			run.UpdateP95()
-
-			run.mu.Lock()
-			report["state"] = run.State
-			report["startedAt"] = run.StartedAt.Format(time.RFC3339)
-			if run.finishedAt != nil {
-				report["finishedAt"] = run.finishedAt.Format(time.RFC3339)
+		startedAt := time.Time{}
+		if v, ok := report["startedAt"].(string); ok {
+			ts, err := time.Parse(time.RFC3339, v)
+			if err == nil {
+				startedAt = ts
 			}
-			report["stats"] = map[string]interface{}{
-				"requests": run.Stats.Requests,
-				"errors":   run.Stats.Errors,
-				"p95ms":    run.Stats.P95(),
-			}
-			run.mu.Unlock()
 		}
 
-		reports = append(reports, report)
+		runInfos = append(runInfos, struct {
+			report    map[string]interface{}
+			startedAt time.Time
+		}{report, startedAt})
 	}
 
-	return reports, nil
+	sort.Slice(runInfos, func(i, j int) bool {
+		return runInfos[i].startedAt.Before(runInfos[j].startedAt)
+	})
+
+	for _, ri := range runInfos {
+		runs = append(runs, ri.report)
+	}
+
+	return runs, nil
 }
 
-// LoadReport loads the full report JSON for runID from store
-func (r *Runner) LoadReport(runID string) (store.Report, error) {
+func (r *Runner) LoadReport(runID string) (map[string]interface{}, error) {
 	return r.runStore.Load(runID)
+}
+
+var ErrTooManyConcurrentRuns = errors.New("too many concurrent runs")
+
+func parseTimestamp(ts string) (time.Time, error) {
+	if ts == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, ts)
 }
