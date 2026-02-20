@@ -1,237 +1,211 @@
 import React, { useState } from 'react';
 
-function StartReplay() {
+const StartReplay: React.FC = () => {
   const [scenarioId, setScenarioId] = useState('');
   const [targetBaseUrl, setTargetBaseUrl] = useState('');
   const [rps, setRps] = useState(10);
   const [durationSec, setDurationSec] = useState(60);
-  const [mode, setMode] = useState('burst');
+  const [mode, setMode] = useState<'burst' | 'timestamp'>('burst');
   const [speed, setSpeed] = useState(1.0);
   const [maxDelayMs, setMaxDelayMs] = useState(0);
   const [startFromTs, setStartFromTs] = useState('');
   const [endAtTs, setEndAtTs] = useState('');
-
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg('');
+    setError(null);
     setRunId(null);
 
-    if (!scenarioId.trim() || !targetBaseUrl.trim()) {
-      setErrorMsg('Scenario ID and Target Base URL are required');
+    if (!scenarioId.match(/^[\w\-]+$/)) {
+      setError('Scenario ID must contain only letters, digits, underscores or dashes');
       return;
     }
-
+    if (!targetBaseUrl) {
+      setError('Target Base URL is required');
+      return;
+    }
     if (rps <= 0) {
-      setErrorMsg('RPS must be greater than 0');
+      setError('RPS must be positive');
       return;
     }
-
     if (durationSec <= 0) {
-      setErrorMsg('Duration must be greater than 0');
+      setError('Duration must be positive');
       return;
     }
-
-    if (mode !== 'burst' && mode !== 'timestamp') {
-      setErrorMsg('Mode must be burst or timestamp');
+    if (speed <= 0) {
+      setError('Speed must be positive');
       return;
     }
-
-    if (speed !== 0 && speed <= 0) {
-      setErrorMsg('Speed must be greater than 0');
-      return;
+    // Validate timestamps if mode=timestamp
+    if (mode === 'timestamp') {
+      if (startFromTs && isNaN(Date.parse(startFromTs))) {
+        setError('Start From Timestamp is invalid');
+        return;
+      }
+      if (endAtTs && isNaN(Date.parse(endAtTs))) {
+        setError('End At Timestamp is invalid');
+        return;
+      }
     }
 
-    if (maxDelayMs < 0) {
-      setErrorMsg('Max Delay must be >= 0');
-      return;
+    const payload: any = {
+      scenarioId,
+      targetBaseUrl,
+      rps,
+      durationSec,
+      mode,
+      speed,
+      maxDelayMs
+    };
+    if (mode === 'timestamp') {
+      if (startFromTs) payload.startFromTs = startFromTs;
+      if (endAtTs) payload.endAtTs = endAtTs;
     }
 
     setLoading(true);
-    try {
-      const body = {
-        scenarioId: scenarioId.trim(),
-        targetBaseUrl: targetBaseUrl.trim(),
-        rps,
-        durationSec,
-        mode,
-        speed,
-        maxDelayMs,
-        startFromTs: startFromTs.trim() || undefined,
-        endAtTs: endAtTs.trim() || undefined,
-      };
 
+    try {
       const res = await fetch('/replay/start', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
-
       if (!res.ok) {
-        const errText = await res.text();
-        setErrorMsg(`Failed to start replay: ${errText}`);
+        let errText = await res.text();
+        setError(`Failed to start replay: ${res.statusText} ${errText}`);
         setLoading(false);
         return;
       }
-
       const data = await res.json();
-      setRunId(data.runId);
-    } catch (err) {
-      setErrorMsg(`Request error: ${err instanceof Error ? err.message : String(err)}`);
+      if (data.runId) {
+        setRunId(data.runId);
+      } else {
+        setError('No runId returned');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Failed to start replay');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div style={{ maxWidth: 600, margin: 'auto' }}>
+    <div>
       <h2>Start Replay</h2>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Scenario ID:<br />
-            <input
-              type="text"
-              value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value)}
-              required
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+      <form onSubmit={onSubmit}>
+        <label htmlFor="scenarioId">Scenario ID:</label>
+        <input
+          id="scenarioId"
+          type="text"
+          value={scenarioId}
+          onChange={e => setScenarioId(e.target.value)}
+          required
+          disabled={loading}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Target Base URL:<br />
-            <input
-              type="text"
-              value={targetBaseUrl}
-              onChange={(e) => setTargetBaseUrl(e.target.value)}
-              required
-              placeholder="http://example.com"
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="targetBaseUrl">Target Base URL:</label>
+        <input
+          id="targetBaseUrl"
+          type="url"
+          value={targetBaseUrl}
+          onChange={e => setTargetBaseUrl(e.target.value)}
+          placeholder="http://..."
+          required
+          disabled={loading}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            RPS (requests per second):<br />
-            <input
-              type="number"
-              value={rps}
-              onChange={(e) => setRps(Number(e.target.value))}
-              min={1}
-              required
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="rps">Requests Per Second (RPS):</label>
+        <input
+          id="rps"
+          type="number"
+          min={1}
+          value={rps}
+          onChange={e => setRps(Number(e.target.value))}
+          required
+          disabled={loading}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Duration (seconds):<br />
-            <input
-              type="number"
-              value={durationSec}
-              onChange={(e) => setDurationSec(Number(e.target.value))}
-              min={1}
-              required
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="durationSec">Duration (seconds):</label>
+        <input
+          id="durationSec"
+          type="number"
+          min={1}
+          value={durationSec}
+          onChange={e => setDurationSec(Number(e.target.value))}
+          required
+          disabled={loading}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Mode:<br />
-            <select value={mode} onChange={(e) => setMode(e.target.value)} style={{ width: '100%' }}>
-              <option value="burst">burst</option>
-              <option value="timestamp">timestamp</option>
-            </select>
-          </label>
-        </div>
+        <label htmlFor="mode">Replay Mode:</label>
+        <select
+          id="mode"
+          value={mode}
+          onChange={e => setMode(e.target.value as 'burst' | 'timestamp')}
+          disabled={loading}
+        >
+          <option value="burst">burst</option>
+          <option value="timestamp">timestamp</option>
+        </select>
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Speed (optional, leave 1 for normal):<br />
-            <input
-              type="number"
-              value={speed}
-              onChange={(e) => setSpeed(Number(e.target.value))}
-              min={0}
-              step={0.1}
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="speed">Speed (multiplier, only timestamp mode):</label>
+        <input
+          id="speed"
+          type="number"
+          min={0.01}
+          step={0.01}
+          value={speed}
+          onChange={e => setSpeed(Number(e.target.value))}
+          disabled={loading || mode !== 'timestamp'}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Max Delay (ms, optional, default 0):<br />
-            <input
-              type="number"
-              value={maxDelayMs}
-              onChange={(e) => setMaxDelayMs(Number(e.target.value))}
-              min={0}
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="maxDelayMs">Max Delay (ms, only timestamp mode):</label>
+        <input
+          id="maxDelayMs"
+          type="number"
+          min={0}
+          value={maxDelayMs}
+          onChange={e => setMaxDelayMs(Number(e.target.value))}
+          disabled={loading || mode !== 'timestamp'}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            Start From Timestamp (RFC3339, optional):<br />
-            <input
-              type="text"
-              value={startFromTs}
-              onChange={(e) => setStartFromTs(e.target.value)}
-              placeholder="2026-02-20T09:20:21Z"
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="startFromTs">Start From Timestamp (RFC3339, optional):</label>
+        <input
+          id="startFromTs"
+          type="datetime-local"
+          value={startFromTs}
+          onChange={e => setStartFromTs(e.target.value)}
+          disabled={loading || mode !== 'timestamp'}
+        />
 
-        <div style={{ marginBottom: 12 }}>
-          <label>
-            End At Timestamp (RFC3339, optional):<br />
-            <input
-              type="text"
-              value={endAtTs}
-              onChange={(e) => setEndAtTs(e.target.value)}
-              placeholder="2026-02-20T09:50:21Z"
-              style={{ width: '100%' }}
-            />
-          </label>
-        </div>
+        <label htmlFor="endAtTs">End At Timestamp (RFC3339, optional):</label>
+        <input
+          id="endAtTs"
+          type="datetime-local"
+          value={endAtTs}
+          onChange={e => setEndAtTs(e.target.value)}
+          disabled={loading || mode !== 'timestamp'}
+        />
 
-        {errorMsg && <div style={{ color: 'red', marginBottom: 12 }}>{errorMsg}</div>}
-
-        <button type="submit" disabled={loading} style={{ padding: '8px 16px' }}>
-          {loading ? 'Starting...' : 'Start Replay'}
-        </button>
+        <button type="submit" disabled={loading}>Start Replay</button>
       </form>
 
+      {loading && <div className="loading-spinner" aria-label="Loading"></div>}
+
+      {error && <div className="error-message">{error}</div>}
+
       {runId && (
-        <div style={{ marginTop: 20 }}>
-          <h3>Replay started</h3>
+        <div>
+          <p>Replay started! Run ID: <strong>{runId}</strong></p>
           <p>
-            Run ID: <strong>{runId}</strong>
-          </p>
-          <p>
-            <a href={`/runs/${runId}`} target="_blank" rel="noopener noreferrer">
-              View Run Report
-            </a>
+            View report: <a href={`/replay/report?runId=${encodeURIComponent(runId)}`} target="_blank" rel="noreferrer">Report</a>
           </p>
         </div>
       )}
     </div>
   );
-}
+};
 
 export default StartReplay;

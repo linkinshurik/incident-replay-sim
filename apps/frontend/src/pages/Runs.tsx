@@ -1,78 +1,84 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
-export interface RunStats {
-  requests: number;
-  errors: number;
-  p95ms: number;
-}
-
-export interface Run {
+interface Run {
   runId: string;
   state: string;
   startedAt: string;
   finishedAt?: string;
-  stats: RunStats;
+  stats: {
+    requests: number;
+    errors: number;
+    p95ms: number;
+  };
 }
 
 const Runs: React.FC = () => {
   const [runs, setRuns] = useState<Run[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  const fetchRuns = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/replay/runs?limit=20');
+      if (!res.ok) throw new Error('Failed to fetch runs');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setRuns(data);
+      } else {
+        setRuns([]);
+      }
+    } catch (e: any) {
+      setError(e.message || 'Error fetching runs');
+      setRuns([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    setLoading(true);
-    fetch('/replay/runs?limit=20')
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`Failed to fetch runs, status: ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data: Run[]) => {
-        setRuns(data);
-        setError(null);
-      })
-      .catch(err => {
-        setError(err.message);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    fetchRuns();
   }, []);
 
+  const openReport = (runId: string) => {
+    navigate(`/replay/report?runId=${encodeURIComponent(runId)}`);
+  };
+
   return (
-    <div style={{ padding: '1rem' }}>
-      <h1>Runs List</h1>
-      {loading && <p>Loading runs...</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-      {!loading && !error && runs.length === 0 && <p>No runs found.</p>}
-      {!loading && !error && runs.length > 0 && (
-        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+    <div>
+      <h2>Replay Runs</h2>
+      {loading && <div className="loading-spinner" aria-label="Loading"></div>}
+      {error && <div className="error-message">{error}</div>}
+      {!loading && runs.length === 0 && <p>No runs found.</p>}
+      {!loading && runs.length > 0 && (
+        <table className="table">
           <thead>
             <tr>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>Run ID</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>State</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>Started At</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>Finished At</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>Requests</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>Errors</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>P95 ms</th>
-              <th style={{ border: '1px solid #ccc', padding: '8px' }}>Report</th>
+              <th>Run ID</th>
+              <th>State</th>
+              <th>Started At</th>
+              <th>Finished At</th>
+              <th>Requests</th>
+              <th>Errors</th>
+              <th>P95 Latency (ms)</th>
+              <th>Report</th>
             </tr>
           </thead>
           <tbody>
             {runs.map(run => (
               <tr key={run.runId}>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{run.runId}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{run.state}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{new Date(run.startedAt).toLocaleString()}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : '-'}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{run.stats.requests}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{run.stats.errors}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>{run.stats.p95ms}</td>
-                <td style={{ border: '1px solid #ccc', padding: '8px' }}>
-                  <Link to={`/runs/${encodeURIComponent(run.runId)}`}>View Report</Link>
+                <td>{run.runId}</td>
+                <td>{run.state}</td>
+                <td>{new Date(run.startedAt).toLocaleString()}</td>
+                <td>{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : '-'}</td>
+                <td>{run.stats.requests}</td>
+                <td>{run.stats.errors}</td>
+                <td>{run.stats.p95ms}</td>
+                <td>
+                  <button className="link-button" onClick={() => openReport(run.runId)}>View</button>
                 </td>
               </tr>
             ))}

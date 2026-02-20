@@ -1,55 +1,51 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
-
-interface Report {
-  [key: string]: any;
-}
+import { useLocation } from 'react-router-dom';
 
 const RunReport: React.FC = () => {
-  const { runId } = useParams<{ runId: string }>();
-  const [report, setReport] = useState<Report | null>(null);
+  const location = useLocation();
+  const [runId, setRunId] = useState<string | null>(null);
+  const [report, setReport] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!runId) return;
+    const params = new URLSearchParams(location.search);
+    const id = params.get('runId');
+    setRunId(id);
+  }, [location.search]);
 
+  useEffect(() => {
+    if (!runId) return;
     setLoading(true);
+    setError(null);
+    setReport(null);
+
     fetch(`/replay/report?runId=${encodeURIComponent(runId)}`)
       .then(res => {
-        if (!res.ok) {
-          throw new Error(`Failed to fetch report, status: ${res.status}`);
-        }
+        if (!res.ok) throw new Error(`Failed to load report: ${res.statusText}`);
         return res.json();
       })
       .then(data => {
         setReport(data);
-        setError(null);
       })
-      .catch(err => {
-        setError(err.message);
-        setReport(null);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+      .catch(e => setError(e.message || 'Failed to fetch report'))
+      .finally(() => setLoading(false));
   }, [runId]);
 
+  if (!runId) {
+    return <div><p>No runId specified in URL.</p></div>;
+  }
+
   return (
-    <div style={{ padding: '1rem' }}>
-      <h1>Run Report</h1>
-      <p><Link to="/runs">Back to Runs List</Link></p>
-
-      {loading && <p>Loading report...</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
-
+    <div>
+      <h2>Run Report - {runId}</h2>
+      {loading && <div className="loading-spinner" aria-label="Loading"></div>}
+      {error && <div className="error-message">{error}</div>}
       {report && (
-        <pre style={{ whiteSpace: 'pre-wrap', wordWrap: 'break-word', backgroundColor: '#f8f8f8', padding: '1rem', borderRadius: '4px' }}>
+        <pre style={{whiteSpace: 'pre-wrap', wordBreak: 'break-word'}}>
           {JSON.stringify(report, null, 2)}
         </pre>
       )}
-
-      {!loading && !error && !report && <p>No report data available.</p>}
     </div>
   );
 };

@@ -1,29 +1,20 @@
-import React, { useState, useEffect, ChangeEvent, FormEvent } from 'react';
+import React, { useEffect, useState } from 'react';
 
-const API_SCENARIOS_LIST = '/scenarios/list';
-const API_SCENARIOS_UPLOAD = '/scenarios/upload';
-
-export default function Scenarios() {
-  const [scenarios, setScenarios] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
+const Scenarios: React.FC = () => {
   const [scenarioId, setScenarioId] = useState('');
-  const [jsonl, setJsonl] = useState('');
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [scenarioList, setScenarioList] = useState<string[]>([]);
 
   const fetchScenarios = async () => {
     try {
-      const res = await fetch(API_SCENARIOS_LIST);
-      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const res = await fetch('/scenarios/list');
+      if (!res.ok) throw new Error('Failed to fetch scenarios');
       const data = await res.json();
-      if (Array.isArray(data)) {
-        setScenarios(data);
-      } else {
-        setScenarios([]);
-      }
+      setScenarioList(Array.isArray(data) ? data : []);
     } catch (e) {
-      setErrorMsg('Failed to fetch scenarios');
-      setScenarios([]);
+      setScenarioList([]);
     }
   };
 
@@ -31,117 +22,97 @@ export default function Scenarios() {
     fetchScenarios();
   }, []);
 
-  const handleScenarioIdChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setScenarioId(e.target.value);
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
+    const file = e.target.files && e.target.files[0];
+    if (!file) {
+      setFileContent('');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setFileContent(reader.result);
+      } else {
+        setFileContent('');
+      }
+    };
+    reader.readAsText(file);
   };
 
-  const handleJsonlChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
-    setJsonl(e.target.value);
-  };
-
-  const handleSubmit = async (e: FormEvent) => {
+  const onUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg(null);
-    setSuccessMsg(null);
-    if (!scenarioId.match(/^[a-zA-Z0-9_-]+$/)) {
-      setErrorMsg('Scenario ID must contain only letters, digits, underscore, or dash');
+    setUploadError(null);
+    if (!scenarioId.match(/^[\w\-]+$/)) {
+      setUploadError('Scenario ID must contain only letters, digits, underscores or dashes');
       return;
     }
-    if (jsonl.trim() === '') {
-      setErrorMsg('JSONL content cannot be empty');
+    if (!fileContent) {
+      setUploadError('No file content to upload');
       return;
     }
-
     setUploading(true);
     try {
-      const res = await fetch(API_SCENARIOS_UPLOAD, {
+      const res = await fetch('/scenarios/upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenarioId, jsonl }),
+        body: JSON.stringify({ scenarioId, jsonl: fileContent })
       });
-
       if (!res.ok) {
-        const errorText = await res.text();
-        throw new Error(errorText || `HTTP error ${res.status}`);
+        throw new Error(`Upload failed: ${res.statusText}`);
       }
-
-      const data = await res.json();
-      if (data.status === 'ok') {
-        setSuccessMsg(`Scenario '${data.scenarioId}' uploaded successfully.`);
-        setScenarioId('');
-        setJsonl('');
-        fetchScenarios();
-      } else {
-        setErrorMsg('Upload failed');
-      }
-    } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : String(error));
+      await fetchScenarios();
+      setScenarioId('');
+      setFileContent('');
+    } catch (err: any) {
+      setUploadError(err.message || 'Upload failed');
     } finally {
       setUploading(false);
     }
   };
 
   return (
-    <div style={{ maxWidth: 800, margin: '1rem auto', padding: '0 1rem' }}>
+    <div>
       <h2>Scenarios</h2>
+      <form onSubmit={onUpload}>
+        <label htmlFor="scenarioId">Scenario ID:</label>
+        <input
+          id="scenarioId"
+          type="text"
+          value={scenarioId}
+          onChange={e => setScenarioId(e.target.value)}
+          placeholder="letters, digits, underscore, dash"
+          required
+          disabled={uploading}
+        />
 
-      <section style={{ marginBottom: '2rem' }}>
-        <h3>Upload Scenario</h3>
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '0.5rem' }}>
-            <label htmlFor="scenarioId" style={{ display: 'block', marginBottom: 4 }}>
-              Scenario ID (letters, digits, underscore, dash):
-            </label>
-            <input
-              id="scenarioId"
-              type="text"
-              value={scenarioId}
-              onChange={handleScenarioIdChange}
-              disabled={uploading}
-              required
-              style={{ width: '100%', padding: 6, fontSize: 14 }}
-              maxLength={64}
-              pattern="[a-zA-Z0-9_-]+"
-              title="Only letters, digits, underscore, or dash allowed"
-            />
-          </div>
-          <div style={{ marginBottom: '0.5rem' }}>
-            <label htmlFor="jsonl" style={{ display: 'block', marginBottom: 4 }}>
-              JSON Lines Content:
-            </label>
-            <textarea
-              id="jsonl"
-              value={jsonl}
-              onChange={handleJsonlChange}
-              rows={10}
-              disabled={uploading}
-              required
-              style={{ width: '100%', fontSize: 14, fontFamily: 'monospace' }}
-              placeholder={`Example:\n{"type":"http","method":"GET","path":"/api/foo","weight":1}\n{"type":"http","method":"POST","path":"/api/bar","weight":2}`}
-            />
-          </div>
-          <button type="submit" disabled={uploading} style={{ padding: '0.5rem 1rem', fontSize: 16 }}>
-            {uploading ? 'Uploading...' : 'Upload'}
-          </button>
-        </form>
-        {errorMsg && <p style={{ color: 'red', marginTop: '0.5rem' }}>{errorMsg}</p>}
-        {successMsg && <p style={{ color: 'green', marginTop: '0.5rem' }}>{successMsg}</p>}
-      </section>
+        <label htmlFor="scenarioFile">Scenario File (JSONL):</label>
+        <input
+          id="scenarioFile"
+          type="file"
+          accept="text/plain,application/jsonl"
+          onChange={onFileChange}
+          disabled={uploading}
+          required
+        />
 
-      <section>
-        <h3>Available Scenarios</h3>
-        {scenarios.length === 0 ? (
-          <p>No scenarios available.</p>
-        ) : (
-          <ul style={{ listStyleType: 'none', paddingLeft: 0 }}>
-            {scenarios.map((id) => (
-              <li key={id} style={{ padding: '0.25rem 0', borderBottom: '1px solid #ddd' }}>
-                {id}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        <button type="submit" disabled={uploading}>Upload</button>
+
+        {uploadError && <div className="error-message">{uploadError}</div>}
+      </form>
+
+      <h3>Available Scenarios</h3>
+      {scenarioList.length === 0 ? (
+        <p>No scenarios found.</p>
+      ) : (
+        <ul>
+          {scenarioList.map(id => (
+            <li key={id}>{id}</li>
+          ))}
+        </ul>
+      )}
     </div>
   );
-}
+};
+
+export default Scenarios;
