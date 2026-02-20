@@ -1,9 +1,15 @@
 ==> fmt (backend)
 ==> fmt (frontend)
-skip: no package.json
+
+> incident-replay-frontend@1.0.0 fmt
+> prettier --write .
+
 ==> lint (backend)
 ==> lint (frontend)
-skip: no package.json
+
+> incident-replay-frontend@1.0.0 lint
+> eslint . --ext .ts,.tsx
+
 ==> test (backend)
 ?   	incident-replay/backend/cmd/server	[no test files]
 ?   	incident-replay/backend/internal/httpapi	[no test files]
@@ -11,10 +17,12 @@ ok  	incident-replay/backend/internal/replay	(cached)
 ok  	incident-replay/backend/internal/scenario	(cached)
 ok  	incident-replay/backend/internal/store	(cached)
 ==> test (frontend)
-skip: no package.json
 ==> build (backend)
 ==> build (frontend)
-skip: no package.json
+
+> incident-replay-frontend@1.0.0 build
+> tsc && vite build
+
 ==> starting backend on :8080
 ==> waiting for backend
 backend is up
@@ -34,94 +42,94 @@ backend is up
               * default: 1 looping VUs for 30s (gracefulStop: 30s)
 
 
-running (0m01.0s), 1/1 VUs, 9870 complete and 0 interrupted iterations
+running (0m01.0s), 1/1 VUs, 9704 complete and 0 interrupted iterations
 default   [   3% ] 1 VUs  01.0s/30s
 
-running (0m02.0s), 1/1 VUs, 20135 complete and 0 interrupted iterations
+running (0m02.0s), 1/1 VUs, 19888 complete and 0 interrupted iterations
 default   [   7% ] 1 VUs  02.0s/30s
 
-running (0m03.0s), 1/1 VUs, 30179 complete and 0 interrupted iterations
+running (0m03.0s), 1/1 VUs, 30209 complete and 0 interrupted iterations
 default   [  10% ] 1 VUs  03.0s/30s
 
-running (0m04.0s), 1/1 VUs, 40298 complete and 0 interrupted iterations
+running (0m04.0s), 1/1 VUs, 40403 complete and 0 interrupted iterations
 default   [  13% ] 1 VUs  04.0s/30s
 
-running (0m05.0s), 1/1 VUs, 50692 complete and 0 interrupted iterations
+running (0m05.0s), 1/1 VUs, 50325 complete and 0 interrupted iterations
 default   [  17% ] 1 VUs  05.0s/30s
 
-running (0m06.0s), 1/1 VUs, 61259 complete and 0 interrupted iterations
+running (0m06.0s), 1/1 VUs, 59984 complete and 0 interrupted iterations
 default   [  20% ] 1 VUs  06.0s/30s
 
-running (0m07.0s), 1/1 VUs, 71477 complete and 0 interrupted iterations
+running (0m07.0s), 1/1 VUs, 69915 complete and 0 interrupted iterations
 default   [  23% ] 1 VUs  07.0s/30s
 
-running (0m08.0s), 1/1 VUs, 82012 complete and 0 interrupted iterations
+running (0m08.0s), 1/1 VUs, 80035 complete and 0 interrupted iterations
 default   [  27% ] 1 VUs  08.0s/30s
 
-running (0m09.0s), 1/1 VUs, 92727 complete and 0 interrupted iterations
+running (0m09.0s), 1/1 VUs, 90073 complete and 0 interrupted iterations
 default   [  30% ] 1 VUs  09.0s/30s
 
-running (0m10.0s), 1/1 VUs, 103519 complete and 0 interrupted iterations
+running (0m10.0s), 1/1 VUs, 99974 complete and 0 interrupted iterations
 default   [  33% ] 1 VUs  10.0s/30s
 
-running (0m11.0s), 1/1 VUs, 114223 complete and 0 interrupted iterations
+running (0m11.0s), 1/1 VUs, 110137 complete and 0 interrupted iterations
 default   [  37% ] 1 VUs  11.0s/30s
 
-running (0m12.0s), 1/1 VUs, 124963 complete and 0 interrupted iterations
+running (0m12.0s), 1/1 VUs, 119083 complete and 0 interrupted iterations
 default   [  40% ] 1 VUs  12.0s/30s
 
-running (0m13.0s), 1/1 VUs, 134724 complete and 0 interrupted iterations
+running (0m13.0s), 1/1 VUs, 129340 complete and 0 interrupted iterations
 default   [  43% ] 1 VUs  13.0s/30s
 
-running (0m14.0s), 1/1 VUs, 145535 complete and 0 interrupted iterations
+running (0m14.0s), 1/1 VUs, 139608 complete and 0 interrupted iterations
 default   [  47% ] 1 VUs  14.0s/30s
 
-running (0m15.0s), 1/1 VUs, 156231 complete and 0 interrupted iterations
+running (0m15.0s), 1/1 VUs, 149910 complete and 0 interrupted iterations
 default   [  50% ] 1 VUs  15.0s/30s
 
-running (0m16.0s), 1/1 VUs, 167069 complete and 0 interrupted iterations
+running (0m16.0s), 1/1 VUs, 160185 complete and 0 interrupted iterations
 default   [  53% ] 1 VUs  16.0s/30s
 
-running (0m17.0s), 1/1 VUs, 177782 complete and 0 interrupted iterations
+running (0m17.0s), 1/1 VUs, 170585 complete and 0 interrupted iterations
 default   [  57% ] 1 VUs  17.0s/30s
 
-running (0m18.0s), 1/1 VUs, 188544 complete and 0 interrupted iterations
+running (0m18.0s), 1/1 VUs, 180138 complete and 0 interrupted iterations
 default   [  60% ] 1 VUs  18.0s/30s
 
-running (0m19.0s), 1/1 VUs, 199432 complete and 0 interrupted iterations
+running (0m19.0s), 1/1 VUs, 190649 complete and 0 interrupted iterations
 default   [  63% ] 1 VUs  19.0s/30s
 
-running (0m20.0s), 1/1 VUs, 210224 complete and 0 interrupted iterations
+running (0m20.0s), 1/1 VUs, 201608 complete and 0 interrupted iterations
 default   [  67% ] 1 VUs  20.0s/30s
 
-running (0m21.0s), 1/1 VUs, 221112 complete and 0 interrupted iterations
+running (0m21.0s), 1/1 VUs, 212293 complete and 0 interrupted iterations
 default   [  70% ] 1 VUs  21.0s/30s
 
-running (0m22.0s), 1/1 VUs, 231831 complete and 0 interrupted iterations
+running (0m22.0s), 1/1 VUs, 222812 complete and 0 interrupted iterations
 default   [  73% ] 1 VUs  22.0s/30s
 
-running (0m23.0s), 1/1 VUs, 242753 complete and 0 interrupted iterations
+running (0m23.0s), 1/1 VUs, 232726 complete and 0 interrupted iterations
 default   [  77% ] 1 VUs  23.0s/30s
 
-running (0m24.0s), 1/1 VUs, 253522 complete and 0 interrupted iterations
+running (0m24.0s), 1/1 VUs, 242934 complete and 0 interrupted iterations
 default   [  80% ] 1 VUs  24.0s/30s
 
-running (0m25.0s), 1/1 VUs, 264520 complete and 0 interrupted iterations
+running (0m25.0s), 1/1 VUs, 251996 complete and 0 interrupted iterations
 default   [  83% ] 1 VUs  25.0s/30s
 
-running (0m26.0s), 1/1 VUs, 275542 complete and 0 interrupted iterations
+running (0m26.0s), 1/1 VUs, 262262 complete and 0 interrupted iterations
 default   [  87% ] 1 VUs  26.0s/30s
 
-running (0m27.0s), 1/1 VUs, 286624 complete and 0 interrupted iterations
+running (0m27.0s), 1/1 VUs, 272486 complete and 0 interrupted iterations
 default   [  90% ] 1 VUs  27.0s/30s
 
-running (0m28.0s), 1/1 VUs, 297586 complete and 0 interrupted iterations
+running (0m28.0s), 1/1 VUs, 282453 complete and 0 interrupted iterations
 default   [  93% ] 1 VUs  28.0s/30s
 
-running (0m29.0s), 1/1 VUs, 308428 complete and 0 interrupted iterations
+running (0m29.0s), 1/1 VUs, 293076 complete and 0 interrupted iterations
 default   [  97% ] 1 VUs  29.0s/30s
 
-running (0m30.0s), 1/1 VUs, 319082 complete and 0 interrupted iterations
+running (0m30.0s), 1/1 VUs, 303235 complete and 0 interrupted iterations
 default   [ 100% ] 1 VUs  30.0s/30s
 
 
@@ -133,35 +141,43 @@ default   [ 100% ] 1 VUs  30.0s/30s
 
   █ TOTAL RESULTS 
 
-    checks_total.......................: 319089  10636.258164/s
-    checks_succeeded...................: 0.00%   0 out of 319089
-    checks_failed......................: 100.00% 319089 out of 319089
+    checks_total.......................: 303240  10107.973382/s
+    checks_succeeded...................: 0.00%   0 out of 303240
+    checks_failed......................: 100.00% 303240 out of 303240
 
     ✗ /scenarios/upload 200
-      ↳  0% — ✓ 0 / ✗ 319089
+      ↳  0% — ✓ 0 / ✗ 303240
 
     HTTP
-    http_req_duration......................: avg=56.35µs min=36µs    med=52µs    max=7.75ms p(90)=71µs     p(95)=84µs    
-    http_req_failed........................: 100.00% 319089 out of 319089
-    http_reqs..............................: 319089  10636.258164/s
+    http_req_duration......................: avg=60.09µs min=36µs    med=54µs    max=8.43ms  p(90)=82µs     p(95)=94µs    
+    http_req_failed........................: 100.00% 303240 out of 303240
+    http_reqs..............................: 303240  10107.973382/s
 
     EXECUTION
-    iteration_duration.....................: avg=92.04µs min=65.41µs med=86.45µs max=7.82ms p(90)=107.83µs p(95)=121.79µs
-    iterations.............................: 319089  10636.258164/s
+    iteration_duration.....................: avg=96.87µs min=65.29µs med=88.83µs max=34.43ms p(90)=121.16µs p(95)=134.79µs
+    iterations.............................: 303240  10107.973382/s
     vus....................................: 1       min=1                max=1
     vus_max................................: 1       min=1                max=1
 
     NETWORK
-    data_received..........................: 56 MB   1.9 MB/s
-    data_sent..............................: 154 MB  5.1 MB/s
+    data_received..........................: 53 MB   1.8 MB/s
+    data_sent..............................: 146 MB  4.9 MB/s
 
 
 
 
-running (0m30.0s), 0/1 VUs, 319089 complete and 0 interrupted iterations
+running (0m30.0s), 0/1 VUs, 303240 complete and 0 interrupted iterations
 default ✓ [ 100% ] 1 VUs  30s
 ==> stopping backend
 ==> k6 smoke OK
 ==> CI OK
 
-time="2026-02-20T10:53:00+01:00" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"
+sh: prettier: command not found
+sh: eslint: command not found
+npm error Missing script: "test"
+npm error
+npm error To see a list of scripts, run:
+npm error   npm run
+npm error A complete log of this run can be found in: /Users/alexandr-bezobrazov/.npm/_logs/2026-02-20T11_13_14_972Z-debug-0.log
+sh: tsc: command not found
+time="2026-02-20T12:13:47+01:00" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"

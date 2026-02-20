@@ -1,9 +1,11 @@
-# Review Notes: Update k6 smoke test and API handler for replay report and runs list
+# Review Notes: Frontend v1 implementation with Vite React TS and basic page skeletons
 
-- Added new endpoints `/replay/report?runId=...` and `/replay/runs?limit=20` to backend HTTP handler with appropriate method checks and JSON responses.
-- `Runner` modified with `ListRuns` and `LoadReport` methods to load stored run reports from persistent storage and enrich active run information correctly.
-- `smoke.js` k6 test updated to upload a scenario, start replay, poll status, stop replay, and then assert that `/replay/report` returns expected JSON containing `runId` and that `/replay/runs` returns a non-empty runs list.
-- API docs updated to describe new `/replay/runs` and `/replay/report` endpoints with example responses.
-- Changes are minimal and align with DoD requirements: code builds, tests pass, lint/format checks pass, and k6 smoke test includes the assertions as requested.
-- No secrets or config changes; observability endpoints unchanged.
-- Overall changes improve observability and test coverage for replay run reports, enhancing usability and monitoring.
+- Frontend app initialized in `apps/frontend` using Vite with React and TypeScript.
+- `vite.config.ts` setup includes proxy configuration for backend routes `/replay`, `/scenarios`, `/healthz`, `/metrics` to `localhost:8080`.
+- Basic React Router setup with routes and navigation links for `Scenarios`, `StartReplay`, `Runs`, and `RunReport` pages.
+- Each page component contains minimal placeholder content as a skeleton for future UI.
+- `package.json` includes scripts for dev, build, lint, and format with appropriate dependencies.
+- `tsconfig.json` configured for React/TS environment.
+- No modifications detected in backend code, respecting task requirement "DO NOT touch backend." 
+- Changes align with DoD: no secret exposure, formatting and lint config included, minimal but complete frontend bootstrapping.
+- Recommend adding README for frontend usage and testing instructions in a subsequent PR.
