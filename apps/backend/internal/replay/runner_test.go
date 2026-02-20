@@ -49,7 +49,7 @@ func TestStartStopStatus(t *testing.T) {
 	}
 
 	st, err := r.Status(id)
-	if err != nil || st.State != "running" {
+	if err != nil || st.State != StateRunning {
 		t.Fatalf("status expected running, got %+v err=%v", st, err)
 	}
 
@@ -58,7 +58,7 @@ func TestStartStopStatus(t *testing.T) {
 	}
 
 	st, _ = r.Status(id)
-	if st.State != "stopped" {
+	if st.State != StateStopped {
 		t.Fatalf("expected stopped, got %s", st.State)
 	}
 }
@@ -86,7 +86,7 @@ func removeScenarioFile(t *testing.T, scenarioID string) error {
 }
 
 func TestStatsAddSampleConcurrent(t *testing.T) {
-	run := NewRun("test-run")
+	run := NewRun("test-run", nil)
 
 	wg := sync.WaitGroup{}
 	n := 1000
@@ -193,7 +193,7 @@ func TestReplayRunnerWithHttpRequests(t *testing.T) {
 		t.Fatalf("Status error: %v", err)
 	}
 
-	if st.State != "stopped" {
+	if st.State != StateStopped {
 		t.Errorf("expected run state stopped, got %s", st.State)
 	}
 

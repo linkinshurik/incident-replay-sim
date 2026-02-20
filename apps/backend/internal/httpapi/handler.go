@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,9 +14,6 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
-
-// Removed duplicate prometheus metrics registration from here.
-// Metrics registration is done in internal/replay/runner.go
 
 const scenariosDataDir = "./data/scenarios"
 
@@ -38,6 +36,9 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/replay/start", h.replayStart)
 	mux.HandleFunc("/replay/stop", h.replayStop)
 	mux.HandleFunc("/replay/status", h.replayStatus)
+
+	mux.HandleFunc("/replay/runs", h.replayRunsList)
+	mux.HandleFunc("/replay/report", h.replayRunReport)
 
 	mux.HandleFunc("/debug/echo", h.debugEcho)
 
@@ -158,6 +159,63 @@ func (h *Handler) replayStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(st)
+}
+
+// GET /replay/runs?limit=20 returns array of run summaries
+func (h *Handler) replayRunsList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	limit := 20
+	qLimit := r.URL.Query().Get("limit")
+	if qLimit != "" {
+		// parse limit
+		if l, err := parsePositiveInt(qLimit); err == nil && l > 0 {
+			limit = l
+		}
+	}
+
+	reports, err := h.runner.ListRuns(limit)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(reports)
+}
+
+// GET /replay/report?runId=... returns JSON report from store
+func (h *Handler) replayRunReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	runID := r.URL.Query().Get("runId")
+	if runID == "" {
+		http.Error(w, "runId is required", http.StatusBadRequest)
+		return
+	}
+
+	report, err := h.runner.LoadReport(runID)
+	if err != nil {
+		http.Error(w, "report not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
+}
+
+func parsePositiveInt(s string) (int, error) {
+	var v int
+	_, err := fmt.Sscanf(s, "%d", &v)
+	if err != nil || v <= 0 {
+		return 0, errors.New("not positive int")
+	}
+	return v, nil
 }
 
 func (h *Handler) debugEcho(w http.ResponseWriter, r *http.Request) {

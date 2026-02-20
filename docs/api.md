@@ -61,6 +61,35 @@ Response:
   }
 }
 
+GET `/replay/runs?limit=20`
+- returns a JSON array of reports or summary data for up to `limit` replay runs
+
+Response:
+- 200 OK
+[
+  {
+    "runId": "string",
+    "state": "running|stopped|failed",
+    "startedAt": "RFC3339",
+    "finishedAt": "RFC3339",    # optional, if stopped
+    "stats": {
+      "requests": 0,
+      "errors": 0,
+      "p95ms": 0
+    }
+  }
+]
+
+GET `/replay/report?runId=...`
+- returns the full JSON report for the specified runId from persistent store
+- Content-Type: application/json
+
+Response:
+- 200 OK
+{
+  ... full report JSON ...
+}
+
 ## Scenario Storage
 
 POST `/scenarios/upload`
