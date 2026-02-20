@@ -1,11 +1,9 @@
-# Review Notes: Persist replay runs report
+# Review Notes: Update k6 smoke test and API handler for replay report and runs list
 
-- Added persistence of run reports to the store (`./data/runs/`) with atomic file writes.
-- Run status, stats, and timestamps are now saved and updated in real-time.
-- Updated `Run` and `Runner` to use the new `RunStore`.
-- Added unit tests for scenario loading, replay runner start/stop/status with scenario files.
-- Tests validate correct JSON parsing of scenario files, addressing the original test failure.
-- Code changes are minimal and focused on storing run metadata and fixing test data format.
-
-This update fixes the JSON parse error in tests and integrates persistent run reporting,
-satisfying the DoD without breaking existing functionality or observability.
+- Added new endpoints `/replay/report?runId=...` and `/replay/runs?limit=20` to backend HTTP handler with appropriate method checks and JSON responses.
+- `Runner` modified with `ListRuns` and `LoadReport` methods to load stored run reports from persistent storage and enrich active run information correctly.
+- `smoke.js` k6 test updated to upload a scenario, start replay, poll status, stop replay, and then assert that `/replay/report` returns expected JSON containing `runId` and that `/replay/runs` returns a non-empty runs list.
+- API docs updated to describe new `/replay/runs` and `/replay/report` endpoints with example responses.
+- Changes are minimal and align with DoD requirements: code builds, tests pass, lint/format checks pass, and k6 smoke test includes the assertions as requested.
+- No secrets or config changes; observability endpoints unchanged.
+- Overall changes improve observability and test coverage for replay run reports, enhancing usability and monitoring.

@@ -539,3 +539,54 @@ func (r *Runner) Status(runID string) (*Status, error) {
 		},
 	}, nil
 }
+
+// ListRuns lists reports from store and enriches with data from active runs
+func (r *Runner) ListRuns(limit int) ([]map[string]interface{}, error) {
+	// Read from store
+	runIDs, err := r.runStore.List(limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Compose reports
+	var reports []map[string]interface{}
+
+	// Lock runs to check active
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, runID := range runIDs {
+		report, err := r.runStore.Load(runID)
+		if err != nil {
+			// Skip loading error
+			continue
+		}
+
+		// If run active in memory, update with latest stats
+		if run, ok := r.runs[runID]; ok {
+			run.UpdateP95()
+
+			run.mu.Lock()
+			report["state"] = run.State
+			report["startedAt"] = run.StartedAt.Format(time.RFC3339)
+			if run.finishedAt != nil {
+				report["finishedAt"] = run.finishedAt.Format(time.RFC3339)
+			}
+			report["stats"] = map[string]interface{}{
+				"requests": run.Stats.Requests,
+				"errors":   run.Stats.Errors,
+				"p95ms":    run.Stats.P95(),
+			}
+			run.mu.Unlock()
+		}
+
+		reports = append(reports, report)
+	}
+
+	return reports, nil
+}
+
+// LoadReport loads the full report JSON for runID from store
+func (r *Runner) LoadReport(runID string) (store.Report, error) {
+	return r.runStore.Load(runID)
+}

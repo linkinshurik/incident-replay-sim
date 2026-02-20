@@ -1,0 +1,11 @@
+{
+  "finishedAt": "2026-02-20T09:50:41Z",
+  "runId": "run-1771581041691608000",
+  "startedAt": "2026-02-20T09:50:41Z",
+  "state": "stopped",
+  "stats": {
+    "errors": 0,
+    "p95ms": 0,
+    "requests": 0
+  }
+}

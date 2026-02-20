@@ -104,5 +104,28 @@ export default function () {
     throw new Error("Metrics missing expected replay metrics");
   }
 
+  // New part: GET /replay/report?runId=... and check response
+  if (runId) {
+    const reportRes = http.get(`${BASE_URL}/replay/report?runId=${runId}`);
+    check(reportRes, {
+      "/replay/report 200": (r) => r.status === 200,
+      "report body contains runId": (r) => r.body && r.body.includes(runId),
+    });
+
+    // GET /replay/runs and assert list not empty
+    const runsRes = http.get(`${BASE_URL}/replay/runs?limit=20`);
+    check(runsRes, {
+      "/replay/runs 200": (r) => r.status === 200,
+      "runs list not empty": (r) => {
+        try {
+          const runsList = r.json();
+          return Array.isArray(runsList) && runsList.length > 0;
+        } catch (_) {
+          return false;
+        }
+      },
+    });
+  }
+
   sleep(1);
 }
