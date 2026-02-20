@@ -82,7 +82,11 @@ function pickFilesByRole(role, files) {
   addPrefix("docs/");
   // core Makefile
   if (files.includes("Makefile")) keep.add("Makefile");
-
+  
+  if (role === "frontend") {
+    addPrefix("apps/frontend/");
+    addPrefix("docs/api.md");
+  }
   if (role === "backend") addPrefix("apps/backend/");
   if (role === "qa") addPrefix("apps/load/");
   if (role === "architect" || role === "product") {
@@ -243,7 +247,7 @@ function ensureBranch({ noBranch, role, task }) {
 async function main() {
   const { role, task, noBranch, repair, review } = parseArgs(process.argv);
 
-  const allowed = new Set(["product", "architect", "backend", "qa", "review"]);
+  const allowed = new Set(["product", "architect", "backend", "qa", "review", "frontend"]);
   if (!allowed.has(role)) {
     console.error(`Invalid role: ${role}. Allowed: ${Array.from(allowed).join(", ")}`);
     process.exit(1);
@@ -297,7 +301,7 @@ ${gitDiffStat()}
 Fix the CI failure with minimal changes.
 `.trim();
 
-    const fixRole = role === "product" ? "architect" : role; // product tasks rarely fix CI; architect can adjust docs
+    const fixRole = role === role;
     const fixTask = `fix CI failure for task: "${task}"`;
 
     const fixPaths = pickFilesByRole(fixRole, repoFiles);
