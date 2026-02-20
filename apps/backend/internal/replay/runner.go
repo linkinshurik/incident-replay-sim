@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"incident-replay/backend/internal/scenario"
+	"incident-replay/backend/internal/store"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -102,15 +103,29 @@ type Run struct {
 	mu        sync.Mutex
 	// control
 	cancel context.CancelFunc
+
+	store      *store.RunStore
+	report     store.Report
+	finishedAt *time.Time
 }
 
-func NewRun(runID string) *Run {
+func NewRun(runID string, runStore *store.RunStore) *Run {
 	return &Run{
 		RunID:     runID,
 		State:     StateRunning,
 		StartedAt: time.Now().UTC(),
 		Stats:     &Stats{},
+		store:     runStore,
+		report:    make(store.Report),
 	}
+}
+
+// persist saves the current report state to store
+func (r *Run) persist() {
+	if r.store == nil {
+		return
+	}
+	_ = r.store.Save(r.RunID, r.report)
 }
 
 // MarkStopped marks the run as stopped
@@ -124,6 +139,14 @@ func (r *Run) MarkStopped() {
 		if r.cancel != nil {
 			r.cancel()
 		}
+		now := time.Now().UTC()
+		r.finishedAt = &now
+
+		// update report
+		r.report["state"] = r.State
+		r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+		r.persist()
+
 		gauge.Dec()
 	}
 }
@@ -136,22 +159,52 @@ func (r *Run) MarkFailed() {
 	if r.cancel != nil {
 		r.cancel()
 	}
+	now := time.Now().UTC()
+	r.finishedAt = &now
+
+	// update report
+	r.report["state"] = r.State
+	r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+	r.persist()
+
 	promReplayRunsActive.Dec()
 }
 
 // AddSample adds a latency sample and error flag to stats
 func (r *Run) AddSample(latencyMs int64, isError bool) {
 	r.Stats.AddSample(latencyMs, isError)
+
+	// Update report fields for stats
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.report["stats"] = map[string]interface{}{
+		"requests": r.Stats.Requests,
+		"errors":   r.Stats.Errors,
+		"p95ms":    r.Stats.P95(),
+	}
+	r.persist()
 }
 
 // UpdateP95 recalculates the p95 for the run stats
 func (r *Run) UpdateP95() {
 	r.Stats.CalculateP95()
+
+	// update report
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.report["stats"] = map[string]interface{}{
+		"requests": r.Stats.Requests,
+		"errors":   r.Stats.Errors,
+		"p95ms":    r.Stats.P95(),
+	}
+	r.persist()
 }
 
 // StatusResponse returns the JSON-compatible status response
 func (r *Run) StatusResponse() map[string]interface{} {
-	return map[string]interface{}{
+	resp := map[string]interface{}{
 		"runId":     r.RunID,
 		"state":     r.State,
 		"startedAt": r.StartedAt.Format(time.RFC3339),
@@ -161,6 +214,10 @@ func (r *Run) StatusResponse() map[string]interface{} {
 			"p95ms":    r.Stats.P95(),
 		},
 	}
+	if r.finishedAt != nil {
+		resp["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+	}
+	return resp
 }
 
 // Runner manages active replay runs
@@ -170,6 +227,7 @@ type Runner struct {
 	runs       map[string]*Run
 	mu         sync.Mutex
 	httpClient *http.Client
+	runStore   *store.RunStore
 }
 
 // Prometheus metrics for replay
@@ -239,6 +297,7 @@ func NewRunner() *Runner {
 	return &Runner{
 		runs:       make(map[string]*Run),
 		httpClient: &http.Client{Timeout: 10 * time.Second},
+		runStore:   store.NewRunStore(),
 	}
 }
 
@@ -315,13 +374,26 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	promReplayRequestsTotal.Inc()
 
 	// Create run and start the goroutine
-	run := NewRun(runID)
+	run := NewRun(runID, r.runStore)
 	ctx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
 
 	r.mu.Lock()
 	r.runs[runID] = run
 	r.mu.Unlock()
+
+	// Initial report state
+	run.mu.Lock()
+	run.report["runId"] = runID
+	run.report["state"] = run.State
+	run.report["startedAt"] = run.StartedAt.Format(time.RFC3339)
+	run.report["stats"] = map[string]interface{}{
+		"requests": 0,
+		"errors":   0,
+		"p95ms":    0,
+	}
+	run.mu.Unlock()
+	run.persist()
 
 	// update active runs gauge
 	promReplayRunsActive.Inc()

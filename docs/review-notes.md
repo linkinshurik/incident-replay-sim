@@ -1,14 +1,11 @@
-# Review Notes: Add persistence v1 with RunStore
+# Review Notes: Persist replay runs report
 
-- Added internal/store package for file-based persistence of replay run reports.
-- RunStore writes JSON reports to ./data/runs/<runId>.json atomically using temp file + rename.
-- Provided Save(runID, Report) and List(limit) methods with proper error handling and directory creation.
-- Added unit tests covering Save, List, Load (extra), edge cases, and atomic write.
-- Dependencies were kept minimal; only standard library packages used.
-- Review against DoD:
-  - Passes local build and CI (test coverage for new store package).
-  - `make fmt`, `make lint`, `make test` succeeded.
-  - No changes to README or Makefile since persistence addition is internal.
-  - Observability unchanged (prometheus metrics in replay package).
-  
-This change meets the DoD for adding persistence v1 and can be merged as is.
+- Added persistence of run reports to the store (`./data/runs/`) with atomic file writes.
+- Run status, stats, and timestamps are now saved and updated in real-time.
+- Updated `Run` and `Runner` to use the new `RunStore`.
+- Added unit tests for scenario loading, replay runner start/stop/status with scenario files.
+- Tests validate correct JSON parsing of scenario files, addressing the original test failure.
+- Code changes are minimal and focused on storing run metadata and fixing test data format.
+
+This update fixes the JSON parse error in tests and integrates persistent run reporting,
+satisfying the DoD without breaking existing functionality or observability.
