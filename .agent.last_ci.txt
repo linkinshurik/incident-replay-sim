@@ -4,12 +4,12 @@
 > incident-replay-frontend@0.1.0 fmt
 > npx --yes prettier --write './src/**/*.{ts,tsx}'
 
-src/App.tsx 194ms
+src/App.tsx 186ms
 src/main.tsx 4ms
 src/pages/RunReport.tsx 21ms
-src/pages/Runs.tsx 25ms
-src/pages/Scenarios.tsx 34ms
-src/pages/StartReplay.tsx 32ms
+src/pages/Runs.tsx 22ms
+src/pages/Scenarios.tsx 23ms
+src/pages/StartReplay.tsx 27ms
 ==> lint (backend)
 ==> lint (frontend)
 
@@ -49,7 +49,7 @@ computing gzip size...
 dist/index.html                   0.39 kB │ gzip:  0.27 kB
 dist/assets/index-9c11c1db.css    1.62 kB │ gzip:  0.73 kB
 dist/assets/index-74a274ce.js   174.54 kB │ gzip: 56.56 kB
-✓ built in 893ms
+✓ built in 898ms
 ==> starting backend on :8080
 ==> waiting for backend
 backend is up
@@ -70,94 +70,94 @@ backend is up
               * default: 1 looping VUs for 30s (gracefulStop: 30s)
 
 
-running (0m01.0s), 1/1 VUs, 4327 complete and 0 interrupted iterations
+running (0m01.0s), 1/1 VUs, 4938 complete and 0 interrupted iterations
 default   [   3% ] 1 VUs  01.0s/30s
 
-running (0m02.0s), 1/1 VUs, 8931 complete and 0 interrupted iterations
+running (0m02.0s), 1/1 VUs, 9900 complete and 0 interrupted iterations
 default   [   7% ] 1 VUs  02.0s/30s
 
-running (0m03.0s), 1/1 VUs, 13253 complete and 0 interrupted iterations
+running (0m03.0s), 1/1 VUs, 15090 complete and 0 interrupted iterations
 default   [  10% ] 1 VUs  03.0s/30s
 
-running (0m04.0s), 1/1 VUs, 17666 complete and 0 interrupted iterations
+running (0m04.0s), 1/1 VUs, 20624 complete and 0 interrupted iterations
 default   [  13% ] 1 VUs  04.0s/30s
 
-running (0m05.0s), 1/1 VUs, 22312 complete and 0 interrupted iterations
+running (0m05.0s), 1/1 VUs, 26229 complete and 0 interrupted iterations
 default   [  17% ] 1 VUs  05.0s/30s
 
-running (0m06.0s), 1/1 VUs, 27287 complete and 0 interrupted iterations
+running (0m06.0s), 1/1 VUs, 31489 complete and 0 interrupted iterations
 default   [  20% ] 1 VUs  06.0s/30s
 
-running (0m07.0s), 1/1 VUs, 32009 complete and 0 interrupted iterations
+running (0m07.0s), 1/1 VUs, 36772 complete and 0 interrupted iterations
 default   [  23% ] 1 VUs  07.0s/30s
 
-running (0m08.0s), 1/1 VUs, 36696 complete and 0 interrupted iterations
+running (0m08.0s), 1/1 VUs, 42161 complete and 0 interrupted iterations
 default   [  27% ] 1 VUs  08.0s/30s
 
-running (0m09.0s), 1/1 VUs, 41103 complete and 0 interrupted iterations
+running (0m09.0s), 1/1 VUs, 47684 complete and 0 interrupted iterations
 default   [  30% ] 1 VUs  09.0s/30s
 
-running (0m10.0s), 1/1 VUs, 45074 complete and 0 interrupted iterations
+running (0m10.0s), 1/1 VUs, 53324 complete and 0 interrupted iterations
 default   [  33% ] 1 VUs  10.0s/30s
 
-running (0m11.0s), 1/1 VUs, 49088 complete and 0 interrupted iterations
+running (0m11.0s), 1/1 VUs, 57836 complete and 0 interrupted iterations
 default   [  37% ] 1 VUs  11.0s/30s
 
-running (0m12.0s), 1/1 VUs, 53462 complete and 0 interrupted iterations
+running (0m12.0s), 1/1 VUs, 63006 complete and 0 interrupted iterations
 default   [  40% ] 1 VUs  12.0s/30s
 
-running (0m13.0s), 1/1 VUs, 57273 complete and 0 interrupted iterations
+running (0m13.0s), 1/1 VUs, 68751 complete and 0 interrupted iterations
 default   [  43% ] 1 VUs  13.0s/30s
 
-running (0m14.0s), 1/1 VUs, 60544 complete and 0 interrupted iterations
+running (0m14.0s), 1/1 VUs, 74491 complete and 0 interrupted iterations
 default   [  47% ] 1 VUs  14.0s/30s
 
-running (0m15.0s), 1/1 VUs, 63305 complete and 0 interrupted iterations
+running (0m15.0s), 1/1 VUs, 80120 complete and 0 interrupted iterations
 default   [  50% ] 1 VUs  15.0s/30s
 
-running (0m16.0s), 1/1 VUs, 66920 complete and 0 interrupted iterations
+running (0m16.0s), 1/1 VUs, 85415 complete and 0 interrupted iterations
 default   [  53% ] 1 VUs  16.0s/30s
 
-running (0m17.0s), 1/1 VUs, 70852 complete and 0 interrupted iterations
+running (0m17.0s), 1/1 VUs, 90750 complete and 0 interrupted iterations
 default   [  57% ] 1 VUs  17.0s/30s
 
-running (0m18.0s), 1/1 VUs, 74978 complete and 0 interrupted iterations
+running (0m18.0s), 1/1 VUs, 96347 complete and 0 interrupted iterations
 default   [  60% ] 1 VUs  18.0s/30s
 
-running (0m19.0s), 1/1 VUs, 79029 complete and 0 interrupted iterations
+running (0m19.0s), 1/1 VUs, 101072 complete and 0 interrupted iterations
 default   [  63% ] 1 VUs  19.0s/30s
 
-running (0m20.0s), 1/1 VUs, 82894 complete and 0 interrupted iterations
+running (0m20.0s), 1/1 VUs, 106596 complete and 0 interrupted iterations
 default   [  67% ] 1 VUs  20.0s/30s
 
-running (0m21.0s), 1/1 VUs, 87004 complete and 0 interrupted iterations
+running (0m21.0s), 1/1 VUs, 111924 complete and 0 interrupted iterations
 default   [  70% ] 1 VUs  21.0s/30s
 
-running (0m22.0s), 1/1 VUs, 90924 complete and 0 interrupted iterations
+running (0m22.0s), 1/1 VUs, 117486 complete and 0 interrupted iterations
 default   [  73% ] 1 VUs  22.0s/30s
 
-running (0m23.0s), 1/1 VUs, 95528 complete and 0 interrupted iterations
+running (0m23.0s), 1/1 VUs, 123177 complete and 0 interrupted iterations
 default   [  77% ] 1 VUs  23.0s/30s
 
-running (0m24.0s), 1/1 VUs, 99146 complete and 0 interrupted iterations
+running (0m24.0s), 1/1 VUs, 128880 complete and 0 interrupted iterations
 default   [  80% ] 1 VUs  24.0s/30s
 
-running (0m25.0s), 1/1 VUs, 103039 complete and 0 interrupted iterations
+running (0m25.0s), 1/1 VUs, 134085 complete and 0 interrupted iterations
 default   [  83% ] 1 VUs  25.0s/30s
 
-running (0m26.0s), 1/1 VUs, 107252 complete and 0 interrupted iterations
+running (0m26.0s), 1/1 VUs, 138658 complete and 0 interrupted iterations
 default   [  87% ] 1 VUs  26.0s/30s
 
-running (0m27.0s), 1/1 VUs, 110650 complete and 0 interrupted iterations
+running (0m27.0s), 1/1 VUs, 143335 complete and 0 interrupted iterations
 default   [  90% ] 1 VUs  27.0s/30s
 
-running (0m28.0s), 1/1 VUs, 114696 complete and 0 interrupted iterations
+running (0m28.0s), 1/1 VUs, 148328 complete and 0 interrupted iterations
 default   [  93% ] 1 VUs  28.0s/30s
 
-running (0m29.0s), 1/1 VUs, 118130 complete and 0 interrupted iterations
+running (0m29.0s), 1/1 VUs, 153823 complete and 0 interrupted iterations
 default   [  97% ] 1 VUs  29.0s/30s
 
-running (0m30.0s), 1/1 VUs, 121903 complete and 0 interrupted iterations
+running (0m30.0s), 1/1 VUs, 159403 complete and 0 interrupted iterations
 default   [ 100% ] 1 VUs  30.0s/30s
 
 
@@ -169,35 +169,35 @@ default   [ 100% ] 1 VUs  30.0s/30s
 
   █ TOTAL RESULTS 
 
-    checks_total.......: 121908  4063.661226/s
-    checks_succeeded...: 0.00%   0 out of 121908
-    checks_failed......: 100.00% 121908 out of 121908
+    checks_total.......: 159418  5314.013752/s
+    checks_succeeded...: 0.00%   0 out of 159418
+    checks_failed......: 100.00% 159418 out of 159418
 
     ✗ /scenarios/upload 200
-      ↳  0% — ✓ 0 / ✗ 121908
+      ↳  0% — ✓ 0 / ✗ 159418
 
     HTTP
-    http_req_duration....: avg=156.53µs min=80µs     med=135µs    max=54.06ms p(90)=230µs    p(95)=267µs  
-    http_req_failed......: 100.00% 121908 out of 121908
-    http_reqs............: 121908  4063.661226/s
+    http_req_duration....: avg=116.16µs min=78µs    med=103µs    max=20.76ms p(90)=145µs    p(95)=184µs   
+    http_req_failed......: 100.00% 159418 out of 159418
+    http_reqs............: 159418  5314.013752/s
 
     EXECUTION
-    iteration_duration...: avg=240.4µs  min=136.25µs med=206.81µs max=54.21ms p(90)=348.37µs p(95)=408.1µs
-    iterations...........: 121908  4063.661226/s
+    iteration_duration...: avg=183.67µs min=133.4µs med=164.42µs max=29.48ms p(90)=224.54µs p(95)=274.77µs
+    iterations...........: 159418  5314.013752/s
     vus..................: 1       min=1                max=1
     vus_max..............: 1       min=1                max=1
 
     NETWORK
-    data_received........: 22 MB   715 kB/s
-    data_sent............: 59 MB   2.0 MB/s
+    data_received........: 28 MB   935 kB/s
+    data_sent............: 77 MB   2.6 MB/s
 
 
 
 
-running (0m30.0s), 0/1 VUs, 121908 complete and 0 interrupted iterations
+running (0m30.0s), 0/1 VUs, 159418 complete and 0 interrupted iterations
 default ✓ [ 100% ] 1 VUs  30s
 ==> stopping backend
 ==> k6 smoke OK
 ==> CI OK
 
-time="2026-02-21T11:10:42+01:00" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"
+time="2026-02-21T11:12:28+01:00" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"
