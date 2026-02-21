@@ -30,6 +30,19 @@ const (
 	StateFailed  ReplayState = "failed"
 )
 
+const defaultLatencySamplesCap = 10000
+
+var latencySamplesCap = loadLatencySamplesCap()
+
+func loadLatencySamplesCap() int {
+	if val, ok := os.LookupEnv("LATENCY_SAMPLES_CAP"); ok {
+		if v, err := strconv.Atoi(val); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultLatencySamplesCap
+}
+
 // Stats holds statistics data for a replay run
 // p95ms is the 95th percentile latency in milliseconds
 // We store latencies in a slice to compute p95
@@ -38,6 +51,7 @@ type Stats struct {
 	Requests       int64   `json:"requests"`
 	Errors         int64   `json:"errors"`
 	LatencySamples []int64 // latency samples in ms
+	latencyHead    int
 	p95ms          int64
 	mu             sync.Mutex
 }
@@ -53,7 +67,12 @@ func (s *Stats) AddSample(latencyMs int64, isError bool) {
 	}
 	// Only store samples of successful requests for latency calc
 	if !isError {
-		s.LatencySamples = append(s.LatencySamples, latencyMs)
+		if len(s.LatencySamples) < latencySamplesCap {
+			s.LatencySamples = append(s.LatencySamples, latencyMs)
+		} else if latencySamplesCap > 0 {
+			s.LatencySamples[s.latencyHead] = latencyMs
+			s.latencyHead = (s.latencyHead + 1) % latencySamplesCap
+		}
 	}
 }
 
