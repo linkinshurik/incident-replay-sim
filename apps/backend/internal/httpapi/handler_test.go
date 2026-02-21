@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -33,6 +34,99 @@ func setupTestScenario(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Remove(path)
 	})
+}
+
+func TestHealthz_OKWhenDirsWritable(t *testing.T) {
+	tmpDir := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origWD)
+	})
+
+	h := setupHandler(t)
+
+	r := httptest.NewRequest("GET", "/healthz", nil)
+	w := httptest.NewRecorder()
+
+	h.healthz(w, r)
+
+	res := w.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res.StatusCode)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("expected status ok, got %s", body["status"])
+	}
+
+	// ensure dirs were created
+	if _, err := os.Stat("./data/scenarios"); err != nil {
+		t.Fatalf("expected scenarios dir to exist: %v", err)
+	}
+	if _, err := os.Stat("./data/runs"); err != nil {
+		t.Fatalf("expected runs dir to exist: %v", err)
+	}
+}
+
+func TestHealthz_DegradedWhenScenariosDirNotWritable(t *testing.T) {
+	// create a temp dir and replace data/scenarios with a file so MkdirAll works but CreateTemp fails
+	tmpDir := t.TempDir()
+	origWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd failed: %v", err)
+	}
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("chdir failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(origWD)
+	})
+
+	if err := os.MkdirAll("data", 0o755); err != nil {
+		t.Fatalf("mkdir data failed: %v", err)
+	}
+
+	// create a file where scenarios dir should be; MkdirAll will succeed, CreateTemp will fail
+	if err := os.WriteFile("data/scenarios", []byte("not a dir"), 0o644); err != nil {
+		t.Fatalf("write file failed: %v", err)
+	}
+
+	h := setupHandler(t)
+
+	r := httptest.NewRequest("GET", "/healthz", nil)
+	w := httptest.NewRecorder()
+
+	h.healthz(w, r)
+
+	res := w.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", res.StatusCode)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body failed: %v", err)
+	}
+	if body["status"] != "degraded" {
+		t.Fatalf("expected status degraded, got %s", body["status"])
+	}
+	if body["error"] == "" {
+		t.Fatalf("expected non-empty error in degraded response")
+	}
 }
 
 func TestReplayStart_RPSValidation(t *testing.T) {

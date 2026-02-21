@@ -1,251 +1,337 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-
-	"github.com/go-chi/chi/v5"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"incident-replay/backend/internal/replay"
 	"incident-replay/backend/internal/scenario"
+	"incident-replay/backend/internal/store"
 )
 
-const (
-	defaultMaxRPS    = 200
-	defaultRunsLimit = 20
-	scenariosDir     = "./data/scenarios"
-)
-
+// Handler aggregates all HTTP handlers for the backend API.
 type Handler struct {
-	runner *replay.Runner
+	mux       *http.ServeMux
+	scenarios *scenario.Service
+	runs      *replay.Runner
+	store     store.RunStore
 }
 
-func NewHandler(runner *replay.Runner) *Handler {
-	return &Handler{runner: runner}
+// NewHandler constructs a new Handler and wires all routes.
+func NewHandler(scenarios *scenario.Service, runs *replay.Runner, store store.RunStore) *Handler {
+	h := &Handler{
+		mux:       http.NewServeMux(),
+		scenarios: scenarios,
+		runs:      runs,
+		store:     store,
+	}
+
+	h.routes()
+	return h
 }
 
-func (h *Handler) Routes() http.Handler {
-	r := chi.NewRouter()
-	r.Use(withLogging)
-	r.Use(withJSON)
-
-	r.Get("/healthz", h.healthz)
-	r.Handle("/metrics", promhttp.Handler())
-
-	r.Post("/replay/start", h.replayStart)
-	r.Post("/replay/stop", h.replayStop)
-	r.Get("/replay/status", h.replayStatus)
-	r.Get("/replay/runs", h.replayRuns)
-	r.Get("/replay/report", h.replayReport)
-
-	r.Post("/scenarios/upload", h.scenariosUpload)
-	r.Get("/scenarios/list", h.scenariosList)
-
-	return r
+// ServeHTTP implements http.Handler.
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mux.ServeHTTP(w, r)
 }
 
-func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+func (h *Handler) routes() {
+	h.mux.HandleFunc("/healthz", h.handleHealthz)
+
+	h.mux.HandleFunc("/scenarios/upload", h.handleScenariosUpload)
+	h.mux.HandleFunc("/scenarios/list", h.handleScenariosList)
+
+	h.mux.HandleFunc("/replay/start", h.handleReplayStart)
+	h.mux.HandleFunc("/replay/stop", h.handleReplayStop)
+	h.mux.HandleFunc("/replay/status", h.handleReplayStatus)
+	h.mux.HandleFunc("/replay/runs", h.handleReplayRuns)
+	h.mux.HandleFunc("/replay/report", h.handleReplayReport)
 }
 
-func (h *Handler) replayStart(w http.ResponseWriter, r *http.Request) {
-	if h.runner.IsShuttingDown() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shutting_down"})
+// handleHealthz checks that ./data/scenarios and ./data/runs exist and are writable.
+// If not writable, returns 503 with {"status":"degraded","error":"..."}.
+// Otherwise returns 200 with {"status":"ok"}.
+func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "method not allowed"})
 		return
 	}
 
-	var req struct {
-		ScenarioID    string  `json:"scenarioId"`
-		TargetBaseURL string  `json:"targetBaseUrl"`
-		RPS           int     `json:"rps"`
-		DurationSec   int     `json:"durationSec"`
-		Mode          string  `json:"mode"`
-		Speed         float64 `json:"speed"`
-		MaxDelayMs    int     `json:"maxDelayMs"`
-		StartFromTs   string  `json:"startFromTs"`
-		EndAtTs       string  `json:"endAtTs"`
+	base := "data"
+	scenariosDir := filepath.Join(base, "scenarios")
+	runsDir := filepath.Join(base, "runs")
+
+	if err := ensureWritableDir(r.Context(), scenariosDir); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "degraded",
+			"error":  fmt.Sprintf("scenarios dir not writable: %v", err),
+		})
+		return
 	}
+
+	if err := ensureWritableDir(r.Context(), runsDir); err != nil {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"status": "degraded",
+			"error":  fmt.Sprintf("runs dir not writable: %v", err),
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// ensureWritableDir verifies that path exists as a directory and is writable.
+// If the directory does not exist, it attempts to create it with 0755 perms.
+// It returns an error if the directory cannot be created or written to.
+func ensureWritableDir(ctx context.Context, path string) error {
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return err
+	}
+
+	// Quick writable check: create and remove a temp file in the directory.
+	f, err := os.CreateTemp(path, ".healthcheck-*")
+	if err != nil {
+		return err
+	}
+	name := f.Name()
+	cerr := f.Close()
+	rerr := os.Remove(name)
+
+	if cerr != nil {
+		return cerr
+	}
+	if rerr != nil {
+		return rerr
+	}
+
+	return ctx.Err()
+}
+
+// --- Scenarios ---
+
+type uploadScenarioRequest struct {
+	ScenarioID string `json:"scenarioId"`
+	JSONL      string `json:"jsonl"`
+}
+
+func (h *Handler) handleScenariosUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req uploadScenarioRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
 		return
 	}
 
-	maxRPS := defaultMaxRPS
-	if envMaxRPS := os.Getenv("MAX_RPS_PER_RUN"); envMaxRPS != "" {
-		if val, err := strconv.Atoi(envMaxRPS); err == nil && val > 0 {
-			maxRPS = val
-		}
-	}
-	if req.RPS <= 0 || req.RPS > maxRPS {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_rps"})
+	if err := h.scenarios.Save(r.Context(), req.ScenarioID, []byte(req.JSONL)); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
-	params := replay.StartParams{
-		ScenarioID:    req.ScenarioID,
-		TargetBaseURL: req.TargetBaseURL,
-		RPS:           req.RPS,
-		Duration:      time.Duration(req.DurationSec) * time.Second,
-		Mode:          req.Mode,
-		Speed:         req.Speed,
-		MaxDelayMs:    int64(req.MaxDelayMs),
-		StartFromTs:   req.StartFromTs,
-		EndAtTs:       req.EndAtTs,
-	}
-
-	runID, err := h.runner.Start(params)
-	if err != nil {
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "too_many_concurrent_runs"):
-			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_concurrent_runs"})
-		case strings.Contains(msg, "required"), strings.Contains(msg, "must be"), strings.Contains(msg, "invalid"), strings.Contains(msg, "load scenario error"):
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": msg})
-		default:
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
-		}
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
-		"runId":  runID,
-		"status": "started",
-	})
-}
-
-func (h *Handler) replayStop(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		RunID string `json:"runId"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.RunID) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-		return
-	}
-
-	if err := h.runner.Stop(req.RunID); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"runId": req.RunID, "status": "stopped"})
-}
-
-func (h *Handler) replayStatus(w http.ResponseWriter, r *http.Request) {
-	runID := strings.TrimSpace(r.URL.Query().Get("runId"))
-	if runID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runId is required"})
-		return
-	}
-	status, err := h.runner.Status(runID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, status)
-}
-
-func (h *Handler) replayRuns(w http.ResponseWriter, r *http.Request) {
-	limit := defaultRunsLimit
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			limit = parsed
-		}
-	}
-
-	runs, err := h.runner.ListRuns(limit)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
-		return
-	}
-	writeJSON(w, http.StatusOK, runs)
-}
-
-func (h *Handler) replayReport(w http.ResponseWriter, r *http.Request) {
-	runID := strings.TrimSpace(r.URL.Query().Get("runId"))
-	if runID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "runId is required"})
-		return
-	}
-
-	report, err := h.runner.LoadReport(runID)
-	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "report_not_found"})
-		return
-	}
-	writeJSON(w, http.StatusOK, report)
-}
-
-func (h *Handler) scenariosUpload(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ScenarioID string `json:"scenarioId"`
-		JSONL      string `json:"jsonl"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-		return
-	}
-	if !scenario.ValidScenarioID(req.ScenarioID) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_scenario_id"})
-		return
-	}
-	if strings.TrimSpace(req.JSONL) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "jsonl is required"})
-		return
-	}
-
-	if err := os.MkdirAll(scenariosDir, 0o755); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
-		return
-	}
-
-	filename := filepath.Join(scenariosDir, req.ScenarioID+".jsonl")
-	if err := os.WriteFile(filename, []byte(req.JSONL), 0o644); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
 		"status":     "ok",
 		"scenarioId": req.ScenarioID,
 	})
 }
 
-func (h *Handler) scenariosList(w http.ResponseWriter, _ *http.Request) {
-	entries, err := os.ReadDir(scenariosDir)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			writeJSON(w, http.StatusOK, []string{})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal_error"})
+func (h *Handler) handleScenariosList(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 
-	ids := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if filepath.Ext(name) != ".jsonl" {
-			continue
-		}
-		ids = append(ids, strings.TrimSuffix(name, ".jsonl"))
+	list, err := h.scenarios.List(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
 	}
-	sort.Strings(ids)
 
-	writeJSON(w, http.StatusOK, ids)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(list)
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload interface{}) {
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+// --- Replay ---
+
+type startReplayRequest struct {
+	ScenarioID  string  `json:"scenarioId"`
+	TargetBase  string  `json:"targetBaseUrl"`
+	RPS         int     `json:"rps"`
+	DurationSec int     `json:"durationSec"`
+	Mode        string  `json:"mode"`
+	Speed       float64 `json:"speed"`
+	MaxDelayMs  int     `json:"maxDelayMs"`
+	StartFromTs string  `json:"startFromTs"`
+	EndAtTs     string  `json:"endAtTs"`
+}
+
+type startReplayResponse struct {
+	RunID  string `json:"runId"`
+	Status string `json:"status"`
+}
+
+func (h *Handler) handleReplayStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req startReplayRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	opts := replay.StartOptions{
+		ScenarioID:  req.ScenarioID,
+		TargetBase:  req.TargetBase,
+		RPS:         req.RPS,
+		DurationSec: req.DurationSec,
+		Mode:        req.Mode,
+		Speed:       req.Speed,
+		MaxDelayMs:  req.MaxDelayMs,
+		StartFromTs: req.StartFromTs,
+		EndAtTs:     req.EndAtTs,
+	}
+
+	runID, err := h.runs.Start(r.Context(), opts)
+	if err != nil {
+		if errors.Is(err, replay.ErrInvalidOptions) {
+			w.WriteHeader(http.StatusBadRequest)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(startReplayResponse{RunID: runID, Status: "started"})
+}
+
+type stopReplayRequest struct {
+	RunID string `json:"runId"`
+}
+
+type stopReplayResponse struct {
+	RunID  string `json:"runId"`
+	Status string `json:"status"`
+}
+
+func (h *Handler) handleReplayStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req stopReplayRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
+		return
+	}
+
+	if err := h.runs.Stop(r.Context(), req.RunID); err != nil {
+		if errors.Is(err, replay.ErrRunNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(stopReplayResponse{RunID: req.RunID, Status: "stopped"})
+}
+
+func (h *Handler) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	runID := r.URL.Query().Get("runId")
+	if runID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "runId is required"})
+		return
+	}
+
+	status, err := h.runs.Status(r.Context(), runID)
+	if err != nil {
+		if errors.Is(err, replay.ErrRunNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(status)
+}
+
+func (h *Handler) handleReplayRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	list, err := h.runs.List(r.Context())
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(list)
+}
+
+func (h *Handler) handleReplayReport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	runID := r.URL.Query().Get("runId")
+	if runID == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "runId is required"})
+		return
+	}
+
+	report, err := h.store.Load(r.Context(), runID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(report)
 }
