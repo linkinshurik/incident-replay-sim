@@ -1,15 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 
 const StartReplay: React.FC = () => {
-  const [scenarioId, setScenarioId] = useState('');
-  const [targetBaseUrl, setTargetBaseUrl] = useState('');
+  const [scenarioId, setScenarioId] = useState("");
+  const [targetBaseUrl, setTargetBaseUrl] = useState("");
   const [rps, setRps] = useState(10);
   const [durationSec, setDurationSec] = useState(60);
-  const [mode, setMode] = useState<'burst' | 'timestamp'>('burst');
+  const [mode, setMode] = useState<"burst" | "timestamp">("burst");
   const [speed, setSpeed] = useState(1.0);
   const [maxDelayMs, setMaxDelayMs] = useState(0);
-  const [startFromTs, setStartFromTs] = useState('');
-  const [endAtTs, setEndAtTs] = useState('');
+  const [startFromTs, setStartFromTs] = useState("");
+  const [endAtTs, setEndAtTs] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
@@ -20,33 +20,35 @@ const StartReplay: React.FC = () => {
     setRunId(null);
 
     if (!scenarioId.match(/^[\w\-]+$/)) {
-      setError('Scenario ID must contain only letters, digits, underscores or dashes');
+      setError(
+        "Scenario ID must contain only letters, digits, underscores or dashes",
+      );
       return;
     }
     if (!targetBaseUrl) {
-      setError('Target Base URL is required');
+      setError("Target Base URL is required");
       return;
     }
     if (rps <= 0) {
-      setError('RPS must be positive');
+      setError("RPS must be positive");
       return;
     }
     if (durationSec <= 0) {
-      setError('Duration must be positive');
+      setError("Duration must be positive");
       return;
     }
     if (speed <= 0) {
-      setError('Speed must be positive');
+      setError("Speed must be positive");
       return;
     }
     // Validate timestamps if mode=timestamp
-    if (mode === 'timestamp') {
+    if (mode === "timestamp") {
       if (startFromTs && isNaN(Date.parse(startFromTs))) {
-        setError('Start From Timestamp is invalid');
+        setError("Start From Timestamp is invalid");
         return;
       }
       if (endAtTs && isNaN(Date.parse(endAtTs))) {
-        setError('End At Timestamp is invalid');
+        setError("End At Timestamp is invalid");
         return;
       }
     }
@@ -58,9 +60,9 @@ const StartReplay: React.FC = () => {
       durationSec,
       mode,
       speed,
-      maxDelayMs
+      maxDelayMs,
     };
-    if (mode === 'timestamp') {
+    if (mode === "timestamp") {
       if (startFromTs) payload.startFromTs = startFromTs;
       if (endAtTs) payload.endAtTs = endAtTs;
     }
@@ -68,10 +70,10 @@ const StartReplay: React.FC = () => {
     setLoading(true);
 
     try {
-      const res = await fetch('/replay/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+      const res = await fetch("/replay/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         let errText = await res.text();
@@ -83,10 +85,10 @@ const StartReplay: React.FC = () => {
       if (data.runId) {
         setRunId(data.runId);
       } else {
-        setError('No runId returned');
+        setError("No runId returned");
       }
     } catch (e: any) {
-      setError(e.message || 'Failed to start replay');
+      setError(e.message || "Failed to start replay");
     } finally {
       setLoading(false);
     }
@@ -101,7 +103,7 @@ const StartReplay: React.FC = () => {
           id="scenarioId"
           type="text"
           value={scenarioId}
-          onChange={e => setScenarioId(e.target.value)}
+          onChange={(e) => setScenarioId(e.target.value)}
           required
           disabled={loading}
         />
@@ -111,7 +113,7 @@ const StartReplay: React.FC = () => {
           id="targetBaseUrl"
           type="url"
           value={targetBaseUrl}
-          onChange={e => setTargetBaseUrl(e.target.value)}
+          onChange={(e) => setTargetBaseUrl(e.target.value)}
           placeholder="http://..."
           required
           disabled={loading}
@@ -123,7 +125,7 @@ const StartReplay: React.FC = () => {
           type="number"
           min={1}
           value={rps}
-          onChange={e => setRps(Number(e.target.value))}
+          onChange={(e) => setRps(Number(e.target.value))}
           required
           disabled={loading}
         />
@@ -134,7 +136,7 @@ const StartReplay: React.FC = () => {
           type="number"
           min={1}
           value={durationSec}
-          onChange={e => setDurationSec(Number(e.target.value))}
+          onChange={(e) => setDurationSec(Number(e.target.value))}
           required
           disabled={loading}
         />
@@ -143,7 +145,7 @@ const StartReplay: React.FC = () => {
         <select
           id="mode"
           value={mode}
-          onChange={e => setMode(e.target.value as 'burst' | 'timestamp')}
+          onChange={(e) => setMode(e.target.value as "burst" | "timestamp")}
           disabled={loading}
         >
           <option value="burst">burst</option>
@@ -157,8 +159,8 @@ const StartReplay: React.FC = () => {
           min={0.01}
           step={0.01}
           value={speed}
-          onChange={e => setSpeed(Number(e.target.value))}
-          disabled={loading || mode !== 'timestamp'}
+          onChange={(e) => setSpeed(Number(e.target.value))}
+          disabled={loading || mode !== "timestamp"}
         />
 
         <label htmlFor="maxDelayMs">Max Delay (ms, only timestamp mode):</label>
@@ -167,17 +169,19 @@ const StartReplay: React.FC = () => {
           type="number"
           min={0}
           value={maxDelayMs}
-          onChange={e => setMaxDelayMs(Number(e.target.value))}
-          disabled={loading || mode !== 'timestamp'}
+          onChange={(e) => setMaxDelayMs(Number(e.target.value))}
+          disabled={loading || mode !== "timestamp"}
         />
 
-        <label htmlFor="startFromTs">Start From Timestamp (RFC3339, optional):</label>
+        <label htmlFor="startFromTs">
+          Start From Timestamp (RFC3339, optional):
+        </label>
         <input
           id="startFromTs"
           type="datetime-local"
           value={startFromTs}
-          onChange={e => setStartFromTs(e.target.value)}
-          disabled={loading || mode !== 'timestamp'}
+          onChange={(e) => setStartFromTs(e.target.value)}
+          disabled={loading || mode !== "timestamp"}
         />
 
         <label htmlFor="endAtTs">End At Timestamp (RFC3339, optional):</label>
@@ -185,11 +189,13 @@ const StartReplay: React.FC = () => {
           id="endAtTs"
           type="datetime-local"
           value={endAtTs}
-          onChange={e => setEndAtTs(e.target.value)}
-          disabled={loading || mode !== 'timestamp'}
+          onChange={(e) => setEndAtTs(e.target.value)}
+          disabled={loading || mode !== "timestamp"}
         />
 
-        <button type="submit" disabled={loading}>Start Replay</button>
+        <button type="submit" disabled={loading}>
+          Start Replay
+        </button>
       </form>
 
       {loading && <div className="loading-spinner" aria-label="Loading"></div>}
@@ -198,9 +204,18 @@ const StartReplay: React.FC = () => {
 
       {runId && (
         <div>
-          <p>Replay started! Run ID: <strong>{runId}</strong></p>
           <p>
-            View report: <a href={`/replay/report?runId=${encodeURIComponent(runId)}`} target="_blank" rel="noreferrer">Report</a>
+            Replay started! Run ID: <strong>{runId}</strong>
+          </p>
+          <p>
+            View report:{" "}
+            <a
+              href={`/replay/report?runId=${encodeURIComponent(runId)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Report
+            </a>
           </p>
         </div>
       )}

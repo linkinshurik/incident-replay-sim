@@ -19,3 +19,6 @@ bin/
 *.tfstate
 *.tfstate.*
 crash.log
+.gocache
+apps/backend/internal/replay/data/runs/
+apps/backend/internal/httpapi/data/runs/

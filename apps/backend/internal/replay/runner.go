@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +109,8 @@ type Run struct {
 	store      *store.RunStore
 	report     store.Report
 	finishedAt *time.Time
+	// semaphore release func for concurrency control
+	releaseSlot func()
 }
 
 func NewRun(runID string, runStore *store.RunStore) *Run {
@@ -147,6 +151,10 @@ func (r *Run) MarkStopped() {
 		r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
 		r.persist()
 
+		if r.releaseSlot != nil {
+			r.releaseSlot()
+		}
+
 		gauge.Dec()
 	}
 }
@@ -165,6 +173,10 @@ func (r *Run) MarkFailed() {
 	// update report
 	r.report["state"] = r.State
 	r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+	if r.releaseSlot != nil {
+		r.releaseSlot()
+	}
+
 	r.persist()
 
 	promReplayRunsActive.Dec()
@@ -228,6 +240,8 @@ type Runner struct {
 	mu         sync.Mutex
 	httpClient *http.Client
 	runStore   *store.RunStore
+	// concurrency limiting semaphore (channel) for max concurrent runs
+	semaphore chan struct{}
 }
 
 // Prometheus metrics for replay
@@ -266,38 +280,19 @@ func init() {
 	prometheus.MustRegister(promReplayRequestDurationMs)
 }
 
-type StartParams struct {
-	ScenarioID    string
-	TargetBaseURL string
-	RPS           int
-	Duration      time.Duration
-
-	// New optional fields
-	Mode        string  // burst|timestamp
-	Speed       float64 // >0
-	MaxDelayMs  int64   // >=0
-	StartFromTs string  // RFC3339 timestamp
-	EndAtTs     string  // RFC3339 timestamp
-}
-
-type StatusStats struct {
-	Requests int64 `json:"requests"`
-	Errors   int64 `json:"errors"`
-	P95ms    int64 `json:"p95ms"`
-}
-
-type Status struct {
-	RunID     string      `json:"runId"`
-	State     ReplayState `json:"state"`
-	StartedAt string      `json:"startedAt"`
-	Stats     StatusStats `json:"stats"`
-}
-
 func NewRunner() *Runner {
+	maxConcurrent := 3 // default
+	if val, ok := os.LookupEnv("MAX_CONCURRENT_RUNS"); ok {
+		if v, err := strconv.Atoi(val); err == nil && v > 0 {
+			maxConcurrent = v
+		}
+	}
+
 	return &Runner{
 		runs:       make(map[string]*Run),
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		runStore:   store.NewRunStore(),
+		semaphore:  make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -306,6 +301,26 @@ func parseTimestamp(ts string) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	return time.Parse(time.RFC3339, ts)
+}
+
+// TryAcquireSlot attempts to acquire a concurrency slot, returns true if acquired, false if no slots available
+func (r *Runner) TryAcquireSlot() bool {
+	select {
+	case r.semaphore <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// ReleaseSlot releases a previously acquired concurrency slot
+func (r *Runner) ReleaseSlot() {
+	select {
+	case <-r.semaphore:
+		// slot released
+	default:
+		// nothing to release
+	}
 }
 
 func (r *Runner) Start(params StartParams) (string, error) {
@@ -353,9 +368,15 @@ func (r *Runner) Start(params StartParams) (string, error) {
 		return "", errors.New("startFromTs must be before endAtTs")
 	}
 
+	// Acquire concurrency semaphore slot
+	if !r.TryAcquireSlot() {
+		return "", errors.New("too_many_concurrent_runs")
+	}
+
 	// Load scenario events
 	rawEvents, err := scenario.LoadScenario(params.ScenarioID)
 	if err != nil {
+		r.ReleaseSlot()
 		return "", fmt.Errorf("load scenario error: %w", err)
 	}
 
@@ -377,6 +398,10 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	run := NewRun(runID, r.runStore)
 	ctx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
+	// assign release function
+	run.releaseSlot = func() {
+		r.ReleaseSlot()
+	}
 
 	r.mu.Lock()
 	r.runs[runID] = run
@@ -540,53 +565,54 @@ func (r *Runner) Status(runID string) (*Status, error) {
 	}, nil
 }
 
-// ListRuns lists reports from store and enriches with data from active runs
 func (r *Runner) ListRuns(limit int) ([]map[string]interface{}, error) {
-	// Read from store
+	// using runStore to list persisted runs
 	runIDs, err := r.runStore.List(limit)
 	if err != nil {
 		return nil, err
 	}
 
-	// Compose reports
-	var reports []map[string]interface{}
+	var results []map[string]interface{}
 
-	// Lock runs to check active
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, runID := range runIDs {
-		report, err := r.runStore.Load(runID)
+	for _, id := range runIDs {
+		report, err := r.runStore.Load(id)
 		if err != nil {
-			// Skip loading error
 			continue
 		}
-
-		// If run active in memory, update with latest stats
-		if run, ok := r.runs[runID]; ok {
-			run.UpdateP95()
-
-			run.mu.Lock()
-			report["state"] = run.State
-			report["startedAt"] = run.StartedAt.Format(time.RFC3339)
-			if run.finishedAt != nil {
-				report["finishedAt"] = run.finishedAt.Format(time.RFC3339)
-			}
-			report["stats"] = map[string]interface{}{
-				"requests": run.Stats.Requests,
-				"errors":   run.Stats.Errors,
-				"p95ms":    run.Stats.P95(),
-			}
-			run.mu.Unlock()
-		}
-
-		reports = append(reports, report)
+		results = append(results, report)
 	}
-
-	return reports, nil
+	return results, nil
 }
 
-// LoadReport loads the full report JSON for runID from store
 func (r *Runner) LoadReport(runID string) (store.Report, error) {
 	return r.runStore.Load(runID)
+}
+
+// Types for StartParams and Status
+
+type StartParams struct {
+	ScenarioID    string
+	TargetBaseURL string
+	RPS           int
+	Duration      time.Duration
+
+	// New optional fields
+	Mode        string  // burst|timestamp
+	Speed       float64 // >0
+	MaxDelayMs  int64   // >=0
+	StartFromTs string  // RFC3339 timestamp
+	EndAtTs     string  // RFC3339 timestamp
+}
+
+type StatusStats struct {
+	Requests int64 `json:"requests"`
+	Errors   int64 `json:"errors"`
+	P95ms    int64 `json:"p95ms"`
+}
+
+type Status struct {
+	RunID     string      `json:"runId"`
+	State     ReplayState `json:"state"`
+	StartedAt string      `json:"startedAt"`
+	Stats     StatusStats `json:"stats"`
 }
