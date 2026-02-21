@@ -1,53 +1,32 @@
 backend:
   image:
-    repository: incident-replay-backend
+    repository: incident-replay/backend
     tag: latest
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
-    port: 8080
-  livenessProbe:
-    httpGet:
-      path: /healthz
-      port: 8080
-    initialDelaySeconds: 10
-    periodSeconds: 10
-    timeoutSeconds: 5
-  readinessProbe:
-    httpGet:
-      path: /healthz
-      port: 8080
-    initialDelaySeconds: 5
-    periodSeconds: 10
-    timeoutSeconds: 5
+
+  storage:
+    enabled: false
+    type: pvc  # pvc or emptyDir
+    size: 1Gi
+
 frontend:
   image:
-    repository: incident-replay-frontend
+    repository: incident-replay/frontend
     tag: latest
     pullPolicy: IfNotPresent
+
   service:
     type: ClusterIP
-    port: 80
-  livenessProbe:
-    httpGet:
-      path: /healthz
-      port: 80
-    initialDelaySeconds: 10
-    periodSeconds: 10
-    timeoutSeconds: 5
-  readinessProbe:
-    httpGet:
-      path: /healthz
-      port: 80
-    initialDelaySeconds: 5
-    periodSeconds: 10
-    timeoutSeconds: 5
+
 ingress:
   enabled: false
   annotations: {}
   hosts:
-    - host: incident-replay.local
+    - host: chart-example.local
       paths:
         - path: /
-          pathType: Prefix
+          pathType: ImplementationSpecific
   tls: []
