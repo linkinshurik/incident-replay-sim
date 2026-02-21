@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 interface Run {
   runId: string;
@@ -23,8 +23,8 @@ const Runs: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/replay/runs?limit=20');
-      if (!res.ok) throw new Error('Failed to fetch runs');
+      const res = await fetch("/replay/runs?limit=20");
+      if (!res.ok) throw new Error("Failed to fetch runs");
       const data = await res.json();
       if (Array.isArray(data)) {
         setRuns(data);
@@ -32,7 +32,7 @@ const Runs: React.FC = () => {
         setRuns([]);
       }
     } catch (e: any) {
-      setError(e.message || 'Error fetching runs');
+      setError(e.message || "Error fetching runs");
       setRuns([]);
     } finally {
       setLoading(false);
@@ -68,17 +68,26 @@ const Runs: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {runs.map(run => (
+            {runs.map((run) => (
               <tr key={run.runId}>
                 <td>{run.runId}</td>
                 <td>{run.state}</td>
                 <td>{new Date(run.startedAt).toLocaleString()}</td>
-                <td>{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : '-'}</td>
+                <td>
+                  {run.finishedAt
+                    ? new Date(run.finishedAt).toLocaleString()
+                    : "-"}
+                </td>
                 <td>{run.stats.requests}</td>
                 <td>{run.stats.errors}</td>
                 <td>{run.stats.p95ms}</td>
                 <td>
-                  <button className="link-button" onClick={() => openReport(run.runId)}>View</button>
+                  <button
+                    className="link-button"
+                    onClick={() => openReport(run.runId)}
+                  >
+                    View
+                  </button>
                 </td>
               </tr>
             ))}

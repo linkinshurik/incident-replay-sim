@@ -6,8 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "lint": "eslint './src/**/*.{ts,tsx}'",
-    "fmt": "prettier --write './src/**/*.{ts,tsx}'",
+    "lint": "npx --yes eslint './src/**/*.{ts,tsx}'",
+    "fmt": "npx --yes prettier --write './src/**/*.{ts,tsx}'",
     "test": "jest"
   },
   "dependencies": {

@@ -3,22 +3,40 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
 	"incident-replay/backend/internal/replay"
 )
 
-func setupHandler() *Handler {
+func setupHandler(t *testing.T) *Handler {
+	t.Helper()
+	setupTestScenario(t)
 	runner := replay.NewRunner()
 	return NewHandler(runner)
 }
 
+func setupTestScenario(t *testing.T) {
+	t.Helper()
+	const dir = "./data/scenarios"
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create scenarios dir: %v", err)
+	}
+	path := filepath.Join(dir, "testscenario.jsonl")
+	content := `{"ts":"2021-01-01T00:00:00Z","type":"http","method":"GET","path":"/healthz"}`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to create scenario: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(path)
+	})
+}
+
 func TestReplayStart_RPSValidation(t *testing.T) {
-	h := setupHandler()
+	h := setupHandler(t)
 
 	// Test cases for invalid RPS
 	tests := []struct {
@@ -98,7 +116,7 @@ func TestReplayStart_RPSValidation(t *testing.T) {
 }
 
 func TestReplayStart_RPSValidation_EnvOverride(t *testing.T) {
-	h := setupHandler()
+	h := setupHandler(t)
 
 	oldMaxRPS := os.Getenv("MAX_RPS_PER_RUN")
 	defer os.Setenv("MAX_RPS_PER_RUN", oldMaxRPS)
