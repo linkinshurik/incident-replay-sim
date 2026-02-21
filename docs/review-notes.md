@@ -1,7 +1,11 @@
-# Review Notes: k6 Smoke Test Enhancement
+# Review Notes: Backend Dockerfile Addition
 
-- Added a detailed k6 smoke test script that uploads a scenario, starts a replay run with timestamp mode and high speed, and polls status until run completion.
-- After completion, asserts that /metrics endpoint contains the new replay metrics: replay_runs_total, replay_run_duration_seconds, replay_active_runs.
-- Validates the replay report and runs list API endpoints for the run.
-- All existing tests and CI steps pass successfully including the new k6 smoke test, meeting all Definition of Done requirements.
-- The changes improve observability and robustness of smoke testing scenarios for replay runs.
+- Added a multi-stage Dockerfile for the Go backend, building a static Linux amd64 binary.
+- Uses `golang:1.25-alpine` as a build image with git install for dependencies.
+- Runtime image is minimal Alpine 3.18 with a non-root user `app`.
+- Creates `/data/scenarios` and `/data/runs` directories owned by the non-root user.
+- Exposes port 8080 and uses environment variables `ADDR` and `DATA_DIR`.
+- Entrypoint runs the built binary directly.
+
+This addition meets the DoD criteria for minimal viable Docker support with security best practices.
+No changes needed.
