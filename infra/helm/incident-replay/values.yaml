@@ -1,0 +1,32 @@
+backend:
+  image:
+    repository: incident-replay/backend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+
+  storage:
+    enabled: false
+    type: pvc  # pvc or emptyDir
+    size: 1Gi
+
+frontend:
+  image:
+    repository: incident-replay/frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+
+ingress:
+  enabled: false
+  annotations: {}
+  hosts:
+    - host: chart-example.local
+      paths:
+        - path: /
+          pathType: ImplementationSpecific
+  tls: []

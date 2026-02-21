@@ -1,0 +1,17 @@
+{{- if .Values.backend.storage.enabled -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "incident-replay.fullname" . }}-backend-pvc
+  labels:
+    app.kubernetes.io/name: {{ include "incident-replay.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: backend
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.backend.storage.size | quote }}
+  storageClassName: ""
+{{- end -}}

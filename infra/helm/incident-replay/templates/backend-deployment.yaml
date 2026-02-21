@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "incident-replay.fullname" . }}-backend
+  labels:
+    app.kubernetes.io/name: {{ include "incident-replay.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "incident-replay.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "incident-replay.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: backend
+    spec:
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 5
+          volumeMounts:
+            {{- if .Values.backend.storage.enabled }}
+            - name: backend-storage
+              mountPath: /data
+            {{- end }}
+      volumes:
+        {{- if .Values.backend.storage.enabled }}
+        - name: backend-storage
+          {{- if eq .Values.backend.storage.type "pvc" }}
+          persistentVolumeClaim:
+            claimName: {{ include "incident-replay.fullname" . }}-backend-pvc
+          {{- else if eq .Values.backend.storage.type "emptyDir" }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
