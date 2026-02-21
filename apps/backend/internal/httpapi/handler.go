@@ -57,6 +57,11 @@ func (h *Handler) healthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) replayStart(w http.ResponseWriter, r *http.Request) {
+	if h.runner.IsShuttingDown() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "shutting_down"})
+		return
+	}
+
 	var req struct {
 		ScenarioID    string  `json:"scenarioId"`
 		TargetBaseURL string  `json:"targetBaseUrl"`

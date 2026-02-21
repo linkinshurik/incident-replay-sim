@@ -2,13 +2,17 @@
 ==> fmt (frontend)
 
 > incident-replay-frontend@0.1.0 fmt
-> prettier --write './src/**/*.{ts,tsx}'
+> npx --yes prettier --write './src/**/*.{ts,tsx}'
 
+src/App.tsx 79ms (unchanged)
+src/main.tsx 3ms (unchanged)
+src/pages/RunReport.tsx 20ms (unchanged)
+src/pages/Runs.tsx 24ms (unchanged)
+src/pages/Scenarios.tsx 23ms (unchanged)
+src/pages/StartReplay.tsx 37ms (unchanged)
 ==> lint (backend)
 
-sh: prettier: command not found
-internal/httpapi/handler.go:9:2: no required module provides package github.com/go-chi/chi/v5; to add it:
-	go get github.com/go-chi/chi/v5
-internal/httpapi/handler.go:10:2: no required module provides package github.com/go-chi/render; to add it:
-	go get github.com/go-chi/render
+# incident-replay/backend/internal/replay
+# [incident-replay/backend/internal/replay]
+vet: internal/replay/runner_test.go:18:20: undefined: store.NewInMemory
 make: *** [lint] Error 1

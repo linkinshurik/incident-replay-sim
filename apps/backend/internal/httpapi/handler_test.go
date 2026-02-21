@@ -175,3 +175,40 @@ func TestReplayStart_RPSValidation_EnvOverride(t *testing.T) {
 		t.Fatalf("expected error invalid_rps, got %s", resp["error"])
 	}
 }
+
+func TestReplayStart_ShuttingDownReturns503(t *testing.T) {
+	setupTestScenario(t)
+	runner := replay.NewRunner()
+	runner.BeginShutdown()
+	h := NewHandler(runner)
+
+	reqBody := map[string]interface{}{
+		"scenarioId":    "testscenario",
+		"targetBaseUrl": "http://example.com",
+		"rps":           1,
+		"durationSec":   1,
+	}
+	buf := new(bytes.Buffer)
+	if err := json.NewEncoder(buf).Encode(reqBody); err != nil {
+		t.Fatalf("encode json failed: %v", err)
+	}
+
+	r := httptest.NewRequest("POST", "/replay/start", buf)
+	w := httptest.NewRecorder()
+	h.replayStart(w, r)
+
+	res := w.Result()
+	defer res.Body.Close()
+
+	if res.StatusCode != 503 {
+		t.Fatalf("expected status 503, got %d", res.StatusCode)
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode json failed: %v", err)
+	}
+	if resp["error"] != "shutting_down" {
+		t.Fatalf("expected error shutting_down, got %s", resp["error"])
+	}
+}

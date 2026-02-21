@@ -18,19 +18,19 @@ lint: ## Lint all (Go + Frontend)
 	@echo "==> lint (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && go vet ./...); else echo "skip: no go.mod"; fi
 	@echo "==> lint (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm run lint || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && [ -d node_modules ] || npm install); (cd $(FRONTEND_DIR) && npm run lint || true); else echo "skip: no package.json"; fi
 
 test: ## Run tests (Go + Frontend)
 	@echo "==> test (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && go test ./...); else echo "skip: no go.mod"; fi
 	@echo "==> test (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm test || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && [ -d node_modules ] || npm install); (cd $(FRONTEND_DIR) && npm test || true); else echo "skip: no package.json"; fi
 
 build: ## Build artifacts (backend + frontend)
 	@echo "==> build (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && go build ./...); else echo "skip: no go.mod"; fi
 	@echo "==> build (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm run build || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && [ -d node_modules ] || npm install); (cd $(FRONTEND_DIR) && npm run build || true); else echo "skip: no package.json"; fi
 
 run-backend: ## Run backend locally (expects apps/backend cmd/main.go later)
 	@echo "==> run backend"

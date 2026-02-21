@@ -13,7 +13,7 @@ const Scenarios: React.FC = () => {
       if (!res.ok) throw new Error("Failed to fetch scenarios");
       const data = await res.json();
       setScenarioList(Array.isArray(data) ? data : []);
-    } catch (e) {
+    } catch {
       setScenarioList([]);
     }
   };
@@ -45,7 +45,7 @@ const Scenarios: React.FC = () => {
     setUploadError(null);
     if (!scenarioId.match(/^[\w\-]+$/)) {
       setUploadError(
-        "Scenario ID must contain only letters, digits, underscores or dashes",
+        "Scenario ID must contain only letters, digits, underscores or dashes"
       );
       return;
     }
@@ -66,8 +66,8 @@ const Scenarios: React.FC = () => {
       await fetchScenarios();
       setScenarioId("");
       setFileContent("");
-    } catch (err: any) {
-      setUploadError(err.message || "Upload failed");
+    } catch (err: unknown) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
     }
