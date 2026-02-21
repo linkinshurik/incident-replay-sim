@@ -1,9 +1,8 @@
-# Review Notes: Helm Chart Update for Backend Storage Support
+# Review Notes: Makefile Helm Commands Addition
 
-- Introduced backend storage configuration in `values.yaml`: `storage.enabled`, `storage.type` (`pvc` or `emptyDir`), and `storage.size`.
-- Added `backend-pvc.yaml` template to create a PersistentVolumeClaim when storage is enabled with type `pvc`.
-- Modified `backend-deployment.yaml` to conditionally mount the storage volume `/data` when storage is enabled.
-- Deployment, service, and storage resource labels follow Kubernetes recommended conventions consistently.
-- Readiness and liveness probes for the backend are properly defined and consistent.
-- Changes respect DoD requirements: formatting, linting, testing, and build passed; no secrets introduced.
-- No changes required; the implementation aligns well with existing Helm chart structure and repository standards.
+- Added `helm-lint` target to run `helm lint` on `infra/helm/incident-replay`, skipping if helm is not installed.
+- Added `helm-template` target to render helm templates for the `incident-replay` chart, skipping if helm is not installed.
+- Verified that the full local CI pipeline (`make ci`) still passes without errors.
+- The additions maintain consistency with existing Makefile command patterns.
+- The changes align with DoD guidelines: CI passes, formatting and linting remain clean, no secrets introduced.
+- No further changes are required; implementation is suitable as is.

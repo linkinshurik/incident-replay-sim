@@ -63,5 +63,13 @@ k6-smoke: ## Run k6 smoke test (starts backend temporarily)
 	@rm -f .backend.pid
 	@echo "==> k6 smoke OK"
 
+helm-lint: ## Run helm lint on infra/helm/incident-replay
+	@if ! command -v helm >/dev/null 2>&1; then echo "skip: helm not installed"; exit 0; fi
+	@helm lint infra/helm/incident-replay
+
+helm-template: ## Render helm template for infra/helm/incident-replay
+	@if ! command -v helm >/dev/null 2>&1; then echo "skip: helm not installed"; exit 0; fi
+	@helm template incident-replay infra/helm/incident-replay
+
 ci: fmt lint test build k6-smoke ## Full local CI pipeline
 	@echo "==> CI OK"
