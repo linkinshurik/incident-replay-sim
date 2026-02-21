@@ -1,8 +1,7 @@
-# Review Notes: Add observability v2 metrics for replay runs
+# Review Notes: k6 Smoke Test Enhancement
 
-- Implemented new Prometheus metrics in `internal/replay`: `replay_runs_total{mode}`, `replay_runs_failed_total{mode,reason}`, `replay_run_duration_seconds{mode}` histogram, and `replay_active_runs` gauge, keeping existing per-request metrics for backward compatibility.
-- Wired metrics updates into the replay lifecycle: incrementing runs_total on start, updating active_runs gauge on start/stop/fail, and recording duration plus failed_total with a normalized `mode` label and low-cardinality `reason`.
-- Adjusted `Run` and `Runner` to track mode per run and to centralize completion handling so durations are measured once per run without introducing high-cardinality labels.
-- Updated `Stop`, `StopAll`, `Status`, and `ListRuns` logic to align with the new Runner/Run responsibilities while preserving API behavior and persistence via `RunStore`.
-- Added targeted tests in `internal/replay/runner_test.go` to cover shutdown flag behavior, StopAll failure persistence, and metric recording on run completion, while keeping existing tests green under `make ci`.
-- CI log in `.agent.last_ci.txt` shows `make ci` passing end-to-end (fmt, lint, test, build, k6-smoke), satisfying DoD requirements for this change set.
+- Added a detailed k6 smoke test script that uploads a scenario, starts a replay run with timestamp mode and high speed, and polls status until run completion.
+- After completion, asserts that /metrics endpoint contains the new replay metrics: replay_runs_total, replay_run_duration_seconds, replay_active_runs.
+- Validates the replay report and runs list API endpoints for the run.
+- All existing tests and CI steps pass successfully including the new k6 smoke test, meeting all Definition of Done requirements.
+- The changes improve observability and robustness of smoke testing scenarios for replay runs.
