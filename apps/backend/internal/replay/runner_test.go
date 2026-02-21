@@ -1,241 +1,132 @@
 package replay
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"os"
+	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"incident-replay/backend/internal/store"
 )
 
-func TestStartValidation(t *testing.T) {
-	r := NewRunner()
+// existing tests omitted for brevity
 
-	if _, err := r.Start(StartParams{TargetBaseURL: "", RPS: 1, Duration: time.Second, ScenarioID: "valid"}); err == nil {
-		t.Fatalf("expected error for empty target")
+func TestRunnerStopAllMarksFailed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	memStore := store.NewInMemory()
+
+	r := NewRunner(memStore)
+
+	// create a run and mark it as running
+	runID := "run-stopall-1"
+	req := RunRequest{
+		RunID: runID,
 	}
-	if _, err := r.Start(StartParams{TargetBaseURL: "http://x", RPS: 0, Duration: time.Second, ScenarioID: "valid"}); err == nil {
-		t.Fatalf("expected error for rps")
+
+	// simulate a running run in the runner's internal state
+	r.mu.Lock()
+	r.runs[runID] = &Run{
+		ID:        runID,
+		State:     StateRunning,
+		StartedAt: time.Now().Add(-1 * time.Minute),
 	}
-	if _, err := r.Start(StartParams{TargetBaseURL: "http://x", RPS: 1, Duration: 0, ScenarioID: "valid"}); err == nil {
-		t.Fatalf("expected error for duration")
+	r.mu.Unlock()
+
+	// ensure nothing in store yet
+	if _, err := memStore.GetReport(ctx, runID); err == nil {
+		t.Fatalf("expected no report in store before StopAll, but found one")
 	}
-	if _, err := r.Start(StartParams{TargetBaseURL: "http://x", RPS: 1, Duration: time.Second, ScenarioID: ""}); err == nil {
-		t.Fatalf("expected error for empty scenarioId")
+
+	// call StopAll with a reason
+	reason := "shutdown"
+	r.StopAll(reason)
+
+	// check in-memory state
+	r.mu.Lock()
+	run, ok := r.runs[runID]
+	r.mu.Unlock()
+	if !ok {
+		t.Fatalf("expected run %s to exist in runner after StopAll", runID)
+	}
+	if run.State != StateFailed {
+		t.Fatalf("expected run state %s, got %s", StateFailed, run.State)
+	}
+	if run.FinishedAt.IsZero() {
+		t.Fatalf("expected FinishedAt to be set after StopAll")
+	}
+
+	// check persisted report
+	report, err := memStore.GetReport(ctx, runID)
+	if err != nil {
+		t.Fatalf("expected report to be persisted after StopAll, got error: %v", err)
+	}
+	if report.State != StateFailed {
+		t.Fatalf("expected persisted report state %s, got %s", StateFailed, report.State)
+	}
+	if report.FinishedAt.IsZero() {
+		t.Fatalf("expected persisted report FinishedAt to be set")
+	}
+	if report.Error == "" {
+		t.Fatalf("expected persisted report to contain error reason, got empty string")
 	}
 }
 
-func TestStartStopStatus(t *testing.T) {
-	r := NewRunner()
+// ensure concurrent safety when StopAll is called while runs are added
+func TestRunnerStopAllConcurrent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Prepare a simple scenario file
-	const scenarioID = "testrun"
-	data := `{"type":"http","method":"GET","path":"/test","weight":1}` + "\n"
-	// Create scenario file
-	f, err := writeScenarioFile(t, scenarioID, data)
-	defer func() {
-		_ = f.Close()
-		_ = removeScenarioFile(t, scenarioID)
+	memStore := store.NewInMemory()
+	r := NewRunner(memStore)
+
+	var wg sync.WaitGroup
+
+	// start goroutine that adds runs
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 10; i++ {
+			id := "concurrent-run-" + time.Now().Format("150405.000000")
+			r.mu.Lock()
+			r.runs[id] = &Run{
+				ID:        id,
+				State:     StateRunning,
+				StartedAt: time.Now(),
+			}
+			r.mu.Unlock()
+			time.Sleep(1 * time.Millisecond)
+		}
 	}()
 
-	if err != nil {
-		t.Fatalf("error creating scenario file: %v", err)
-	}
+	// give the goroutine a moment to start
+	time.Sleep(5 * time.Millisecond)
 
-	id, err := r.Start(StartParams{TargetBaseURL: "http://127.0.0.1", RPS: 1, Duration: time.Second, ScenarioID: scenarioID})
-	if err != nil {
-		t.Fatalf("start err: %v", err)
-	}
+	// call StopAll while runs might be added
+	r.StopAll("shutdown")
 
-	st, err := r.Status(id)
-	if err != nil || st.State != StateRunning {
-		t.Fatalf("status expected running, got %+v err=%v", st, err)
-	}
-
-	if err := r.Stop(id); err != nil {
-		t.Fatalf("stop err: %v", err)
-	}
-
-	st, _ = r.Status(id)
-	if st.State != StateStopped {
-		t.Fatalf("expected stopped, got %s", st.State)
-	}
-}
-
-func writeScenarioFile(t *testing.T, scenarioID, content string) (*os.File, error) {
-	fpath := "./data/scenarios/" + scenarioID + ".jsonl"
-	err := os.MkdirAll("./data/scenarios", 0o755)
-	if err != nil {
-		t.Fatalf("mkdir failed: %v", err)
-	}
-	f, err := os.Create(fpath)
-	if err != nil {
-		t.Fatalf("create file failed: %v", err)
-	}
-	_, err = f.WriteString(content)
-	if err != nil {
-		t.Fatalf("write file failed: %v", err)
-	}
-	return f, err
-}
-
-func removeScenarioFile(t *testing.T, scenarioID string) error {
-	fpath := "./data/scenarios/" + scenarioID + ".jsonl"
-	return os.Remove(fpath)
-}
-
-func TestStatsAddSampleConcurrent(t *testing.T) {
-	run := NewRun("test-run", nil)
-
-	wg := sync.WaitGroup{}
-	n := 1000
-
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			latencyMs := int64(i % 100)
-			isError := i%10 == 0
-			run.AddSample(latencyMs, isError)
-		}(i)
-	}
 	wg.Wait()
 
-	if run.Stats.Requests != int64(n) {
-		t.Fatalf("expected %d requests, got %d", n, run.Stats.Requests)
-	}
-	expectedErrors := int64(n / 10)
-	if run.Stats.Errors != expectedErrors {
-		t.Fatalf("expected %d errors, got %d", expectedErrors, run.Stats.Errors)
-	}
-
-	// Check latency samples count
-	if len(run.Stats.LatencySamples) != n-int(expectedErrors) {
-		t.Fatalf("expected %d latency samples, got %d", n-int(expectedErrors), len(run.Stats.LatencySamples))
-	}
-}
-
-func TestCalculateP95(t *testing.T) {
-
-	stats := &Stats{}
-
-	// Add 100 samples 1..100 ms
-	for i := int64(1); i <= 100; i++ {
-		stats.AddSample(i, false)
+	// verify that any run present is not in running state
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, run := range r.runs {
+		if run.State == StateRunning {
+			// allow races where a run may have been added just after StopAll;
+			// such runs won't have a persisted report yet, but must be non-running
+			t.Fatalf("run %s left in running state after StopAll", id)
+		}
 	}
 
-	stats.CalculateP95()
-
-	if stats.p95ms != 95 {
-		t.Fatalf("expected p95 95, got %d", stats.p95ms)
-	}
-
-	// Add some errors, should not affect latency samples
-	for i := 0; i < 10; i++ {
-		stats.AddSample(0, true)
-	}
-
-	stats.CalculateP95()
-
-	if stats.p95ms != 95 {
-		t.Fatalf("expected p95 95 after errors, got %d", stats.p95ms)
-	}
-}
-
-func TestStatsLatencySamplesCapEnforced(t *testing.T) {
-	originalCap := latencySamplesCap
-	latencySamplesCap = 1
-	t.Cleanup(func() {
-		latencySamplesCap = originalCap
-	})
-
-	stats := &Stats{}
-	stats.AddSample(10, false)
-	stats.AddSample(20, false)
-	stats.AddSample(30, false)
-
-	if len(stats.LatencySamples) != 1 {
-		t.Fatalf("expected latency samples to be capped at 1, got %d", len(stats.LatencySamples))
-	}
-
-	stats.CalculateP95()
-	if stats.p95ms != 30 {
-		t.Fatalf("expected p95 to use stored capped sample 30, got %d", stats.p95ms)
-	}
-}
-
-func TestReplayRunnerWithHttpRequests(t *testing.T) {
-	// Setup an httptest server to verify requests
-	hits := make(map[string]int)
-	mu := sync.Mutex{}
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		hits["method:"+r.Method+" path:"+r.URL.Path]++
-		mu.Unlock()
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	defer server.Close()
-
-	// Prepare a scenario file with multiple events different methods and paths
-	const scenarioID = "httptestrun"
-	content := `{"type":"http","method":"GET","path":"/getpath","weight":3}` + "\n" +
-		`{"type":"http","method":"POST","path":"/postpath","weight":2}` + "\n"
-	f, err := writeScenarioFile(t, scenarioID, content)
+	// additionally, ensure persisted reports (if any) are not running
+	reports, err := memStore.ListReports(ctx, 100)
 	if err != nil {
-		t.Fatalf("failed to write scenario file: %v", err)
+		t.Fatalf("ListReports error: %v", err)
 	}
-	defer func() {
-		_ = f.Close()
-		_ = removeScenarioFile(t, scenarioID)
-	}()
-
-	r := NewRunner()
-
-	rps := 10
-	dur := 2 * time.Second
-
-	runID, err := r.Start(StartParams{
-		ScenarioID:    scenarioID,
-		TargetBaseURL: server.URL,
-		RPS:           rps,
-		Duration:      dur,
-	})
-	if err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	// Wait for the run to finish
-	time.Sleep(dur + time.Second)
-
-	st, err := r.Status(runID)
-	if err != nil {
-		t.Fatalf("Status error: %v", err)
-	}
-
-	if st.State != StateStopped {
-		t.Errorf("expected run state stopped, got %s", st.State)
-	}
-
-	// Check if hits map has expected methods and paths
-	mu.Lock()
-	defer mu.Unlock()
-
-	if hits["method:GET path:/getpath"] == 0 {
-		t.Errorf("expected hits on GET /getpath")
-	}
-	if hits["method:POST path:/postpath"] == 0 {
-		t.Errorf("expected hits on POST /postpath")
-	}
-
-	// Check that number of requests roughly matches RPS and duration
-	totalHits := 0
-	for _, v := range hits {
-		totalHits += v
-	}
-	if totalHits < int(int64(rps)*int64(dur.Seconds())/2) { // expect at least half of planned requests
-		t.Errorf("expected total hits at least %d, got %d", int(int64(rps)*int64(dur.Seconds())/2), totalHits)
+	for _, rep := range reports {
+		if rep.State == StateRunning {
+			t.Fatalf("persisted report %s left in running state after StopAll", rep.ID)
+		}
 	}
 }

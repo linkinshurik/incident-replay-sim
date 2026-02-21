@@ -480,7 +480,7 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 		for {
 			select {
 			case <-ctx.Done():
-				run.MarkStopped()
+				// run was stopped explicitly; MarkStopped is called by Stop/MarkStopped caller
 				return
 			case now := <-ticker.C:
 				if now.After(end) {
@@ -522,116 +522,104 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 				promReplayRequestDurationMs.Observe(float64(latencyMs))
 
 				if err != nil {
-					// Record error sample
-					run.AddSample(0, true)
+					run.AddSample(latencyMs, true)
 					promReplayErrorsTotal.Inc()
 					continue
 				}
 
-				resp.Body.Close()
+				_ = resp.Body.Close()
 
-				isError := resp.StatusCode < 200 || resp.StatusCode >= 300
-
-				// Record stats
-				run.AddSample(latencyMs, isError)
-
-				if isError {
+				isErr := resp.StatusCode >= 400
+				run.AddSample(latencyMs, isErr)
+				if isErr {
 					promReplayErrorsTotal.Inc()
 				}
 			}
 		}
-	} else {
-		// Timestamp mode not implemented yet
-		// Just mark failed
-		run.MarkFailed()
 	}
 }
 
-func (r *Runner) Stop(runID string) error {
+// StartParams holds parameters for starting a replay run
+type StartParams struct {
+	ScenarioID    string
+	TargetBaseURL string
+	RPS           int
+	Duration      time.Duration
+	Mode          string
+	Speed         float64
+	MaxDelayMs    int64
+	StartFromTs   string
+	EndAtTs       string
+}
+
+// Status returns the current status for a run
+func (r *Runner) Status(runID string) (*Run, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	run, ok := r.runs[runID]
 	if !ok {
-		return errors.New("runId not found")
+		return nil, fmt.Errorf("run not found")
+	}
+	return run, nil
+}
+
+// Stop stops a running run by ID
+func (r *Runner) Stop(runID string) error {
+	r.mu.Lock()
+	run, ok := r.runs[runID]
+	r.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("run not found")
 	}
 
 	run.MarkStopped()
 	return nil
 }
 
-func (r *Runner) Status(runID string) (*Status, error) {
+// StopAll stops all running runs and marks them as failed with the given reason.
+// The reason is not currently persisted but can be used in future report extensions.
+func (r *Runner) StopAll(reason string) {
+	_ = reason // reserved for future use
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	run, ok := r.runs[runID]
-	if !ok {
-		return nil, errors.New("runId not found")
+	runsCopy := make([]*Run, 0, len(r.runs))
+	for _, run := range r.runs {
+		runsCopy = append(runsCopy, run)
 	}
+	r.mu.Unlock()
 
-	// update p95 on status request
-	run.UpdateP95()
-
-	return &Status{
-		RunID:     runID,
-		State:     run.State,
-		StartedAt: run.StartedAt.Format(time.RFC3339),
-		Stats: StatusStats{
-			Requests: run.Stats.Requests,
-			Errors:   run.Stats.Errors,
-			P95ms:    run.Stats.P95(),
-		},
-	}, nil
+	for _, run := range runsCopy {
+		run.MarkFailed()
+	}
 }
 
+// ListRuns returns up to limit run reports from store
 func (r *Runner) ListRuns(limit int) ([]map[string]interface{}, error) {
-	// using runStore to list persisted runs
-	runIDs, err := r.runStore.List(limit)
+	ids, err := r.runStore.List(limit)
 	if err != nil {
 		return nil, err
 	}
 
-	var results []map[string]interface{}
-
-	for _, id := range runIDs {
-		report, err := r.runStore.Load(id)
+	var runs []map[string]interface{}
+	for _, id := range ids {
+		rep, err := r.runStore.Load(id)
 		if err != nil {
 			continue
 		}
-		results = append(results, report)
+		if rep != nil {
+			// ensure required fields, or skip if missing
+			if _, ok := rep["runId"]; !ok {
+				rep["runId"] = id
+			}
+			runs = append(runs, rep)
+		}
 	}
-	return results, nil
+	return runs, nil
 }
 
+// LoadReport loads a report for a given runID from store
 func (r *Runner) LoadReport(runID string) (store.Report, error) {
 	return r.runStore.Load(runID)
-}
-
-// Types for StartParams and Status
-
-type StartParams struct {
-	ScenarioID    string
-	TargetBaseURL string
-	RPS           int
-	Duration      time.Duration
-
-	// New optional fields
-	Mode        string  // burst|timestamp
-	Speed       float64 // >0
-	MaxDelayMs  int64   // >=0
-	StartFromTs string  // RFC3339 timestamp
-	EndAtTs     string  // RFC3339 timestamp
-}
-
-type StatusStats struct {
-	Requests int64 `json:"requests"`
-	Errors   int64 `json:"errors"`
-	P95ms    int64 `json:"p95ms"`
-}
-
-type Status struct {
-	RunID     string      `json:"runId"`
-	State     ReplayState `json:"state"`
-	StartedAt string      `json:"startedAt"`
-	Stats     StatusStats `json:"stats"`
 }

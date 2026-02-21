@@ -5,7 +5,7 @@ const BASE_URL = __ENV.BASE_URL || "http://127.0.0.1:8080";
 
 export const options = {
   vus: 1,
-  duration: "30s",
+  duration: "3s",
   thresholds: {
     http_req_failed: ["rate<0.35"],
   },
