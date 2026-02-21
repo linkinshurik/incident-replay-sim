@@ -161,7 +161,7 @@ ${extra || ""}
 /* ---------- OpenAI call (strict schema) ---------- */
 async function callLLM({ client, role, task, selectedFiles, repoFileList, extra }) {
   const resp = await client.responses.create({
-    model: process.env.OPENAI_MODEL || "gpt-5.1",
+    model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
     max_output_tokens: 9000,
     input: [
       { role: "system", content: systemPrompt(role) },

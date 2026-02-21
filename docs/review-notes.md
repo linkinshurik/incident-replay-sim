@@ -1,9 +1,7 @@
-# Review Notes: Add graceful shutdown in cmd/server/main.go
+# Review Notes: k6 Smoke Test Enhancement
 
-- Implemented signal handling for SIGINT and SIGTERM.
-- On signal received, calls http.Server.Shutdown with a 10-second timeout.
-- Logs emitted on shutdown start and shutdown completion or error.
-- Ensures server clean shutdown while requests can finish or timeout.
-- Changes only affect main.go with no impact on other components.
-- Meets DoD: formatted, linted, tested, builds successfully, and passes smoke test.
-- No further changes required for current task.
+- Added a detailed k6 smoke test script that uploads a scenario, starts a replay run with timestamp mode and high speed, and polls status until run completion.
+- After completion, asserts that /metrics endpoint contains the new replay metrics: replay_runs_total, replay_run_duration_seconds, replay_active_runs.
+- Validates the replay report and runs list API endpoints for the run.
+- All existing tests and CI steps pass successfully including the new k6 smoke test, meeting all Definition of Done requirements.
+- The changes improve observability and robustness of smoke testing scenarios for replay runs.

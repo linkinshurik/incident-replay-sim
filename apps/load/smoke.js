@@ -96,8 +96,9 @@ export default function () {
   const metrics = http.get(`${BASE_URL}/metrics`);
   const checkMetrics = check(metrics, {
     "/metrics 200": (r) => r.status === 200,
-    "metrics include replay_requests_total": (r) => r.body.includes("replay_requests_total"),
-    "metrics include replay_runs_active": (r) => r.body.includes("replay_runs_active"),
+    "metrics include replay_runs_total": (r) => r.body.includes("replay_runs_total"),
+    "metrics include replay_run_duration_seconds": (r) => r.body.includes("replay_run_duration_seconds"),
+    "metrics include replay_active_runs": (r) => r.body.includes("replay_active_runs"),
   });
 
   if (!checkMetrics) {
