@@ -143,6 +143,28 @@ func TestCalculateP95(t *testing.T) {
 	}
 }
 
+func TestStatsLatencySamplesCapEnforced(t *testing.T) {
+	originalCap := latencySamplesCap
+	latencySamplesCap = 1
+	t.Cleanup(func() {
+		latencySamplesCap = originalCap
+	})
+
+	stats := &Stats{}
+	stats.AddSample(10, false)
+	stats.AddSample(20, false)
+	stats.AddSample(30, false)
+
+	if len(stats.LatencySamples) != 1 {
+		t.Fatalf("expected latency samples to be capped at 1, got %d", len(stats.LatencySamples))
+	}
+
+	stats.CalculateP95()
+	if stats.p95ms != 30 {
+		t.Fatalf("expected p95 to use stored capped sample 30, got %d", stats.p95ms)
+	}
+}
+
 func TestReplayRunnerWithHttpRequests(t *testing.T) {
 	// Setup an httptest server to verify requests
 	hits := make(map[string]int)
