@@ -2,13 +2,203 @@
 ==> fmt (frontend)
 
 > incident-replay-frontend@0.1.0 fmt
-> prettier --write './src/**/*.{ts,tsx}'
+> npx --yes prettier --write './src/**/*.{ts,tsx}'
 
+src/App.tsx 94ms (unchanged)
+src/main.tsx 4ms (unchanged)
+src/pages/RunReport.tsx 23ms (unchanged)
+src/pages/Runs.tsx 38ms (unchanged)
+src/pages/Scenarios.tsx 35ms (unchanged)
+src/pages/StartReplay.tsx 58ms (unchanged)
 ==> lint (backend)
+==> lint (frontend)
 
-sh: prettier: command not found
-internal/httpapi/handler.go:9:2: no required module provides package github.com/go-chi/chi/v5; to add it:
-	go get github.com/go-chi/chi/v5
-internal/httpapi/handler.go:10:2: no required module provides package github.com/go-chi/render; to add it:
-	go get github.com/go-chi/render
-make: *** [lint] Error 1
+> incident-replay-frontend@0.1.0 lint
+> npx --yes eslint './src/**/*.{ts,tsx}'
+
+==> test (backend)
+?   	incident-replay/backend/cmd/server	[no test files]
+ok  	incident-replay/backend/internal/httpapi	(cached)
+ok  	incident-replay/backend/internal/replay	(cached)
+ok  	incident-replay/backend/internal/scenario	(cached)
+ok  	incident-replay/backend/internal/store	(cached)
+==> test (frontend)
+
+> incident-replay-frontend@0.1.0 test
+> jest
+
+==> build (backend)
+==> build (frontend)
+
+> incident-replay-frontend@0.1.0 build
+> tsc && vite build
+
+==> starting backend on :8080
+==> waiting for backend
+backend is up
+==> running k6
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: smoke.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 1 max VUs, 1m0s max duration (incl. graceful stop):
+              * default: 1 looping VUs for 30s (gracefulStop: 30s)
+
+
+running (0m01.0s), 1/1 VUs, 1965 complete and 0 interrupted iterations
+default   [   3% ] 1 VUs  01.0s/30s
+
+running (0m02.0s), 1/1 VUs, 4865 complete and 0 interrupted iterations
+default   [   7% ] 1 VUs  02.0s/30s
+
+running (0m03.0s), 1/1 VUs, 8840 complete and 0 interrupted iterations
+default   [  10% ] 1 VUs  03.0s/30s
+
+running (0m04.0s), 1/1 VUs, 11982 complete and 0 interrupted iterations
+default   [  13% ] 1 VUs  04.0s/30s
+
+running (0m05.0s), 1/1 VUs, 16120 complete and 0 interrupted iterations
+default   [  17% ] 1 VUs  05.0s/30s
+
+running (0m06.0s), 1/1 VUs, 19076 complete and 0 interrupted iterations
+default   [  20% ] 1 VUs  06.0s/30s
+
+running (0m07.1s), 1/1 VUs, 22733 complete and 0 interrupted iterations
+default   [  24% ] 1 VUs  07.1s/30s
+
+running (0m08.0s), 1/1 VUs, 25656 complete and 0 interrupted iterations
+default   [  27% ] 1 VUs  08.0s/30s
+
+running (0m09.0s), 1/1 VUs, 30183 complete and 0 interrupted iterations
+default   [  30% ] 1 VUs  09.0s/30s
+
+running (0m10.0s), 1/1 VUs, 35235 complete and 0 interrupted iterations
+default   [  33% ] 1 VUs  10.0s/30s
+
+running (0m11.0s), 1/1 VUs, 39542 complete and 0 interrupted iterations
+default   [  37% ] 1 VUs  11.0s/30s
+
+running (0m12.0s), 1/1 VUs, 43798 complete and 0 interrupted iterations
+default   [  40% ] 1 VUs  12.0s/30s
+
+running (0m13.0s), 1/1 VUs, 48468 complete and 0 interrupted iterations
+default   [  43% ] 1 VUs  13.0s/30s
+
+running (0m14.0s), 1/1 VUs, 52440 complete and 0 interrupted iterations
+default   [  47% ] 1 VUs  14.0s/30s
+
+running (0m15.0s), 1/1 VUs, 56912 complete and 0 interrupted iterations
+default   [  50% ] 1 VUs  15.0s/30s
+
+running (0m16.0s), 1/1 VUs, 61439 complete and 0 interrupted iterations
+default   [  53% ] 1 VUs  16.0s/30s
+
+running (0m17.0s), 1/1 VUs, 64748 complete and 0 interrupted iterations
+default   [  57% ] 1 VUs  17.0s/30s
+
+running (0m18.0s), 1/1 VUs, 69112 complete and 0 interrupted iterations
+default   [  60% ] 1 VUs  18.0s/30s
+
+running (0m19.0s), 1/1 VUs, 72579 complete and 0 interrupted iterations
+default   [  63% ] 1 VUs  19.0s/30s
+
+running (0m20.0s), 1/1 VUs, 76399 complete and 0 interrupted iterations
+default   [  67% ] 1 VUs  20.0s/30s
+
+running (0m21.0s), 1/1 VUs, 80010 complete and 0 interrupted iterations
+default   [  70% ] 1 VUs  21.0s/30s
+
+running (0m22.0s), 1/1 VUs, 84619 complete and 0 interrupted iterations
+default   [  73% ] 1 VUs  22.0s/30s
+
+running (0m23.0s), 1/1 VUs, 88607 complete and 0 interrupted iterations
+default   [  77% ] 1 VUs  23.0s/30s
+
+running (0m24.0s), 1/1 VUs, 93223 complete and 0 interrupted iterations
+default   [  80% ] 1 VUs  24.0s/30s
+
+running (0m25.0s), 1/1 VUs, 97776 complete and 0 interrupted iterations
+default   [  83% ] 1 VUs  25.0s/30s
+
+running (0m26.0s), 1/1 VUs, 101932 complete and 0 interrupted iterations
+default   [  87% ] 1 VUs  26.0s/30s
+
+running (0m27.0s), 1/1 VUs, 106584 complete and 0 interrupted iterations
+default   [  90% ] 1 VUs  27.0s/30s
+
+running (0m28.0s), 1/1 VUs, 109655 complete and 0 interrupted iterations
+default   [  93% ] 1 VUs  28.0s/30s
+
+running (0m29.0s), 1/1 VUs, 113664 complete and 0 interrupted iterations
+default   [  97% ] 1 VUs  29.0s/30s
+
+running (0m30.0s), 1/1 VUs, 118136 complete and 0 interrupted iterations
+default   [ 100% ] 1 VUs  30.0s/30s
+
+
+  █ THRESHOLDS 
+
+    http_req_failed
+    ✗ 'rate<0.35' rate=100.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 118151  3938.438871/s
+    checks_succeeded...: 0.00%   0 out of 118151
+    checks_failed......: 100.00% 118151 out of 118151
+
+    ✗ /scenarios/upload 200
+      ↳  0% — ✓ 0 / ✗ 118151
+
+    HTTP
+    http_req_duration....: avg=156.81µs min=82µs     med=127µs    max=88.02ms  p(90)=222µs    p(95)=279µs   
+    http_req_failed......: 100.00% 118151 out of 118151
+    http_reqs............: 118151  3938.438871/s
+
+    EXECUTION
+    iteration_duration...: avg=247.72µs min=136.96µs med=203.46µs max=131.25ms p(90)=343.98µs p(95)=439.45µs
+    iterations...........: 118151  3938.438871/s
+    vus..................: 1       min=1                max=1
+    vus_max..............: 1       min=1                max=1
+
+    NETWORK
+    data_received........: 21 MB   693 kB/s
+    data_sent............: 57 MB   1.9 MB/s
+
+
+
+
+running (0m30.0s), 0/1 VUs, 118151 complete and 0 interrupted iterations
+default ✓ [ 100% ] 1 VUs  30s
+==> stopping backend
+==> k6 smoke OK
+==> CI OK
+
+
+Oops! Something went wrong! :(
+
+ESLint: 10.0.1
+
+ESLint couldn't find an eslint.config.(js|mjs|cjs) file.
+
+From ESLint v9.0.0, the default configuration file is now eslint.config.js.
+If you are using a .eslintrc.* file, please follow the migration guide
+to update your configuration file to the new format:
+
+https://eslint.org/docs/latest/use/configure/migration-guide
+
+If you still have problems after following the migration guide, please stop by
+https://eslint.org/chat/help to chat with the team.
+
+sh: jest: command not found
+sh: tsc: command not found
+time="2026-02-21T10:23:46+01:00" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"
