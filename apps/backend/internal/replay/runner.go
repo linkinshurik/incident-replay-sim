@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"incident-replay/backend/internal/scenario"
@@ -260,7 +261,8 @@ type Runner struct {
 	httpClient *http.Client
 	runStore   *store.RunStore
 	// concurrency limiting semaphore (channel) for max concurrent runs
-	semaphore chan struct{}
+	semaphore    chan struct{}
+	shuttingDown atomic.Bool
 }
 
 // Prometheus metrics for replay
@@ -340,6 +342,14 @@ func (r *Runner) ReleaseSlot() {
 	default:
 		// nothing to release
 	}
+}
+
+func (r *Runner) BeginShutdown() {
+	r.shuttingDown.Store(true)
+}
+
+func (r *Runner) IsShuttingDown() bool {
+	return r.shuttingDown.Load()
 }
 
 func (r *Runner) Start(params StartParams) (string, error) {

@@ -4,7 +4,7 @@ import { useLocation } from "react-router-dom";
 const RunReport: React.FC = () => {
   const location = useLocation();
   const [runId, setRunId] = useState<string | null>(null);
-  const [report, setReport] = useState<any>(null);
+  const [report, setReport] = useState<Record<string, unknown> | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +29,9 @@ const RunReport: React.FC = () => {
       .then((data) => {
         setReport(data);
       })
-      .catch((e) => setError(e.message || "Failed to fetch report"))
+      .catch((e: unknown) =>
+        setError(e instanceof Error ? e.message : "Failed to fetch report")
+      )
       .finally(() => setLoading(false));
   }, [runId]);
 

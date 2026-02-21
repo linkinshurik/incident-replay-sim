@@ -36,6 +36,8 @@ func main() {
 		<-sigCh
 		log.Printf("shutdown started")
 
+		runner.BeginShutdown()
+
 		// stop all running replays first so they are marked failed and persisted
 		runner.StopAll("server_shutdown")
 
