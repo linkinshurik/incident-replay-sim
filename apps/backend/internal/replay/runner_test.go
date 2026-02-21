@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func withTempWD(t *testing.T) {
@@ -69,4 +70,21 @@ func TestRunnerShutdownFlag(t *testing.T) {
 	if !r.IsShuttingDown() {
 		t.Fatalf("expected shutdown flag true after BeginShutdown")
 	}
+}
+
+func TestRunMetricsOnCompletion(t *testing.T) {
+	withTempWD(t)
+
+	r := NewRunner()
+	runID := "run-metrics-1"
+	run := NewRun(runID, r.runStore)
+	run.mode = "burst"
+
+	// mark stopped to trigger duration observation
+	start := run.StartedAt
+	// simulate a finishedAt a bit later
+	finished := start.Add(2 * time.Second)
+	run.finishedAt = &finished
+
+	run.MarkStopped()
 }

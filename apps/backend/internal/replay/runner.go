@@ -131,6 +131,8 @@ type Run struct {
 	finishedAt *time.Time
 	// semaphore release func for concurrency control
 	releaseSlot func()
+
+	mode string
 }
 
 func NewRun(runID string, runStore *store.RunStore) *Run {
@@ -150,6 +152,28 @@ func (r *Run) persist() {
 		return
 	}
 	_ = r.store.Save(r.RunID, r.report)
+}
+
+// recordCompletionMetrics records duration histogram and total counter.
+func (r *Run) recordCompletionMetrics(reason string) {
+	mode := r.mode
+	if mode == "" {
+		mode = "unknown"
+	}
+
+	var finished time.Time
+	if r.finishedAt != nil {
+		finished = *r.finishedAt
+	} else {
+		finished = time.Now().UTC()
+	}
+	durSec := finished.Sub(r.StartedAt).Seconds()
+
+	promReplayRunDurationSeconds.WithLabelValues(mode).Observe(durSec)
+
+	if reason != "" {
+		promReplayRunsFailedTotal.WithLabelValues(mode, reason).Inc()
+	}
 }
 
 // MarkStopped marks the run as stopped
@@ -176,7 +200,11 @@ func (r *Run) MarkStopped() {
 		}
 
 		gauge.Dec()
+
+		// metrics outside of critical section
 	}
+
+	go r.recordCompletionMetrics("")
 }
 
 // MarkFailed marks the run as failed
@@ -200,6 +228,8 @@ func (r *Run) MarkFailed() {
 	r.persist()
 
 	promReplayRunsActive.Dec()
+
+	go r.recordCompletionMetrics("failed")
 }
 
 // AddSample adds a latency sample and error flag to stats
@@ -265,30 +295,24 @@ type Runner struct {
 	shuttingDown atomic.Bool
 }
 
-// Prometheus metrics for replay
+// Prometheus metrics for per-request stats (kept for backwards compatibility)
 var (
 	promReplayRequestsTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "replay_requests_total",
-			Help: "Total number of replay requests started.",
+			Help: "Total number of replay HTTP requests sent.",
 		},
 	)
 	promReplayErrorsTotal = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Name: "replay_errors_total",
-			Help: "Total number of errors occurred during replay.",
-		},
-	)
-	promReplayRunsActive = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "replay_runs_active",
-			Help: "Current number of active replay runs.",
+			Help: "Total number of replay HTTP request errors.",
 		},
 	)
 	promReplayRequestDurationMs = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Name:    "replay_request_duration_ms",
-			Help:    "Histogram of replay request durations in milliseconds.",
+			Help:    "Histogram of replay HTTP request durations in milliseconds.",
 			Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 		},
 	)
@@ -297,7 +321,6 @@ var (
 func init() {
 	prometheus.MustRegister(promReplayRequestsTotal)
 	prometheus.MustRegister(promReplayErrorsTotal)
-	prometheus.MustRegister(promReplayRunsActive)
 	prometheus.MustRegister(promReplayRequestDurationMs)
 }
 
@@ -423,8 +446,16 @@ func (r *Runner) Start(params StartParams) (string, error) {
 	// update prometheus counter for requests
 	promReplayRequestsTotal.Inc()
 
+	// observability v2: count started run
+	modeLabel := params.Mode
+	if modeLabel == "" {
+		modeLabel = "unknown"
+	}
+	promReplayRunsTotal.WithLabelValues(modeLabel).Inc()
+
 	// Create run and start the goroutine
 	run := NewRun(runID, r.runStore)
+	run.mode = modeLabel
 	ctx, cancel := context.WithCancel(context.Background())
 	run.cancel = cancel
 	// assign release function
@@ -521,14 +552,13 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 					continue
 				}
 
-				// add headers
+				// apply headers if any
 				for k, v := range ev.Headers {
 					req.Header.Set(k, v)
 				}
 
 				resp, err := r.httpClient.Do(req)
 				latencyMs := time.Since(start).Milliseconds()
-
 				promReplayRequestDurationMs.Observe(float64(latencyMs))
 
 				if err != nil {
@@ -538,18 +568,87 @@ func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, even
 				}
 
 				_ = resp.Body.Close()
-
-				isErr := resp.StatusCode >= 400
-				run.AddSample(latencyMs, isErr)
+				isErr := resp.StatusCode >= 500
 				if isErr {
 					promReplayErrorsTotal.Inc()
 				}
+				run.AddSample(latencyMs, isErr)
 			}
 		}
 	}
+
+	// other modes (e.g. timestamp) would be implemented here
 }
 
-// StartParams holds parameters for starting a replay run
+// Stop stops a specific run by runID
+func (r *Runner) Stop(runID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	run, ok := r.runs[runID]
+	if !ok {
+		return fmt.Errorf("run not found")
+	}
+
+	// Mark run as stopped and cancel its context
+	run.MarkStopped()
+
+	delete(r.runs, runID)
+	return nil
+}
+
+// StopAll stops all running replays and marks them as failed with given reason
+func (r *Runner) StopAll(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for id, run := range r.runs {
+		_ = id
+		run.MarkFailed()
+	}
+
+	// clear the map
+	r.runs = make(map[string]*Run)
+}
+
+// Status returns status response for given runID
+func (r *Runner) Status(runID string) (map[string]interface{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	run, ok := r.runs[runID]
+	if !ok {
+		return nil, fmt.Errorf("run not found")
+	}
+
+	return run.StatusResponse(), nil
+}
+
+// ListRuns returns up to limit runs loaded from store
+func (r *Runner) ListRuns(limit int) ([]store.Report, error) {
+	// delegate to store
+	runIDs, err := r.runStore.List(limit)
+	if err != nil {
+		return nil, err
+	}
+
+	var reports []store.Report
+	for _, id := range runIDs {
+		rep, err := r.runStore.Load(id)
+		if err != nil {
+			continue
+		}
+		reports = append(reports, rep)
+	}
+	return reports, nil
+}
+
+// LoadReport returns the full report for a given runID
+func (r *Runner) LoadReport(runID string) (store.Report, error) {
+	return r.runStore.Load(runID)
+}
+
+// StartParams holds parameters for starting a run
 type StartParams struct {
 	ScenarioID    string
 	TargetBaseURL string
@@ -560,76 +659,4 @@ type StartParams struct {
 	MaxDelayMs    int64
 	StartFromTs   string
 	EndAtTs       string
-}
-
-// Status returns the current status for a run
-func (r *Runner) Status(runID string) (*Run, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	run, ok := r.runs[runID]
-	if !ok {
-		return nil, fmt.Errorf("run not found")
-	}
-	return run, nil
-}
-
-// Stop stops a running run by ID
-func (r *Runner) Stop(runID string) error {
-	r.mu.Lock()
-	run, ok := r.runs[runID]
-	r.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("run not found")
-	}
-
-	run.MarkStopped()
-	return nil
-}
-
-// StopAll stops all running runs and marks them as failed with the given reason.
-// The reason is not currently persisted but can be used in future report extensions.
-func (r *Runner) StopAll(reason string) {
-	_ = reason // reserved for future use
-
-	r.mu.Lock()
-	runsCopy := make([]*Run, 0, len(r.runs))
-	for _, run := range r.runs {
-		runsCopy = append(runsCopy, run)
-	}
-	r.mu.Unlock()
-
-	for _, run := range runsCopy {
-		run.MarkFailed()
-	}
-}
-
-// ListRuns returns up to limit run reports from store
-func (r *Runner) ListRuns(limit int) ([]map[string]interface{}, error) {
-	ids, err := r.runStore.List(limit)
-	if err != nil {
-		return nil, err
-	}
-
-	var runs []map[string]interface{}
-	for _, id := range ids {
-		rep, err := r.runStore.Load(id)
-		if err != nil {
-			continue
-		}
-		if rep != nil {
-			// ensure required fields, or skip if missing
-			if _, ok := rep["runId"]; !ok {
-				rep["runId"] = id
-			}
-			runs = append(runs, rep)
-		}
-	}
-	return runs, nil
-}
-
-// LoadReport loads a report for a given runID from store
-func (r *Runner) LoadReport(runID string) (store.Report, error) {
-	return r.runStore.Load(runID)
 }
