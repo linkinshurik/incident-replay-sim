@@ -1,0 +1,5 @@
+apiVersion: v2
+name: incident-replay
+description: Helm chart for Incident Replay backend and frontend
+version: 0.1.0
+appVersion: "1.0"
