@@ -65,3 +65,9 @@ k6-smoke: ## Run k6 smoke test (starts backend temporarily)
 
 ci: fmt lint test build k6-smoke ## Full local CI pipeline
 	@echo "==> CI OK"
+
+docker-up: ## Run docker compose up with build
+	docker compose up --build
+
+docker-down: ## Run docker compose down with volume removal
+	docker compose down -v

@@ -1,9 +1,9 @@
-# Review Notes: Root Docker Compose and README Update
+# Review Notes: Update Root Makefile with Docker Commands
 
-- Added a root docker-compose.yml defining `backend` and `frontend` services, with ports and volumes as specified.
-- Backend service builds from `apps/backend`, exposes port 8080, and mounts local `./data` volume to container `/data`.
-- Frontend service builds from `apps/frontend`, exposes port 3000 mapped to container port 80, and depends on backend starting first.
-- Frontend proxies API requests to backend internally, avoiding CORS issues; no extraneous volume mounts added for frontend.
-- Updated top-level README.md with instructions on running services via `docker-compose`, exposed ports, data persistence, and relevant make commands.
-- Changes meet DoD requirements: repo builds, tests, lint, k6 smoke pass; README adequately documents running via docker-compose.
-- No issues detected; changes are minimal, clear, and align with product goals.
+- Added `docker-up` and `docker-down` targets to root Makefile.
+- `docker-up` runs `docker compose up --build`, starting all services with build.
+- `docker-down` runs `docker compose down -v`, stopping services and removing volumes.
+- Existing targets remained intact and unchanged.
+- Commands are documented with helpful comments in the Makefile.
+- Changes align with DoD: no broken build, lint, tests; functionality is additive and non-breaking.
+- No documentation outside Makefile changes needed as commands are straightforward and typical for Docker Compose usage.
