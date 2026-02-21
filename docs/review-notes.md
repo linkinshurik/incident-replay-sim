@@ -1,12 +1,9 @@
-# Review Notes: Frontend Dockerfile Addition
+# Review Notes: Root Docker Compose and README Update
 
-- Added a multi-stage Dockerfile in `apps/frontend/Dockerfile`:
-  - Stage 1 uses `node:18-alpine` to run `npm ci` and build the React app.
-  - Stage 2 uses `nginx:stable-alpine` to serve the built app from `/usr/share/nginx/html`.
-- Added `apps/frontend/nginx.conf` with minimal nginx configuration:
-  - Serves static files with fallback to `index.html` for SPA routing.
-  - Proxies `/replay/`, `/scenarios/`, `/healthz`, and `/metrics` endpoints to the backend service at `http://backend:8080`.
-  - Proxy headers are set to preserve client info.
-- This setup avoids CORS issues by proxying API requests through nginx.
-- The changes are minimal, focused, and align with the task description and DoD.
-- No issues detected; frontend containerization and proxying properly configured.
+- Added a root docker-compose.yml defining `backend` and `frontend` services, with ports and volumes as specified.
+- Backend service builds from `apps/backend`, exposes port 8080, and mounts local `./data` volume to container `/data`.
+- Frontend service builds from `apps/frontend`, exposes port 3000 mapped to container port 80, and depends on backend starting first.
+- Frontend proxies API requests to backend internally, avoiding CORS issues; no extraneous volume mounts added for frontend.
+- Updated top-level README.md with instructions on running services via `docker-compose`, exposed ports, data persistence, and relevant make commands.
+- Changes meet DoD requirements: repo builds, tests, lint, k6 smoke pass; README adequately documents running via docker-compose.
+- No issues detected; changes are minimal, clear, and align with product goals.

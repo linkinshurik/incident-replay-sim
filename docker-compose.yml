@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./apps/backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
+
+  frontend:
+    build:
+      context: ./apps/frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    # No extra volumes, uses internal nginx proxy to backend
