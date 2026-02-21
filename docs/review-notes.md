@@ -1,7 +1,9 @@
-# Review Notes: k6 Smoke Test Enhancement
+# Review Notes: Update Root Makefile with Docker Commands
 
-- Added a detailed k6 smoke test script that uploads a scenario, starts a replay run with timestamp mode and high speed, and polls status until run completion.
-- After completion, asserts that /metrics endpoint contains the new replay metrics: replay_runs_total, replay_run_duration_seconds, replay_active_runs.
-- Validates the replay report and runs list API endpoints for the run.
-- All existing tests and CI steps pass successfully including the new k6 smoke test, meeting all Definition of Done requirements.
-- The changes improve observability and robustness of smoke testing scenarios for replay runs.
+- Added `docker-up` and `docker-down` targets to root Makefile.
+- `docker-up` runs `docker compose up --build`, starting all services with build.
+- `docker-down` runs `docker compose down -v`, stopping services and removing volumes.
+- Existing targets remained intact and unchanged.
+- Commands are documented with helpful comments in the Makefile.
+- Changes align with DoD: no broken build, lint, tests; functionality is additive and non-breaking.
+- No documentation outside Makefile changes needed as commands are straightforward and typical for Docker Compose usage.
