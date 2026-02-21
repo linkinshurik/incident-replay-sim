@@ -8,27 +8,32 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 
 	"incident-replay/backend/internal/replay"
 	"incident-replay/backend/internal/scenario"
-	"incident-replay/backend/internal/store"
+)
+
+const (
+	scenariosDirDefault = "data/scenarios"
+	runsDirDefault      = "data/runs"
+	defaultRunsLimit    = 20
+	defaultMaxRPSPerRun = 200
 )
 
 // Handler aggregates all HTTP handlers for the backend API.
 type Handler struct {
-	mux       *http.ServeMux
-	scenarios *scenario.Service
-	runs      *replay.Runner
-	store     store.RunStore
+	mux  *http.ServeMux
+	runs *replay.Runner
 }
 
 // NewHandler constructs a new Handler and wires all routes.
-func NewHandler(scenarios *scenario.Service, runs *replay.Runner, store store.RunStore) *Handler {
+func NewHandler(runs *replay.Runner) *Handler {
 	h := &Handler{
-		mux:       http.NewServeMux(),
-		scenarios: scenarios,
-		runs:      runs,
-		store:     store,
+		mux:  http.NewServeMux(),
+		runs: runs,
 	}
 
 	h.routes()
@@ -54,8 +59,6 @@ func (h *Handler) routes() {
 }
 
 // handleHealthz checks that ./data/scenarios and ./data/runs exist and are writable.
-// If not writable, returns 503 with {"status":"degraded","error":"..."}.
-// Otherwise returns 200 with {"status":"ok"}.
 func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
@@ -65,11 +68,7 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	base := "data"
-	scenariosDir := filepath.Join(base, "scenarios")
-	runsDir := filepath.Join(base, "runs")
-
-	if err := ensureWritableDir(r.Context(), scenariosDir); err != nil {
+	if err := ensureWritableDir(r.Context(), scenariosDirDefault); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": "degraded",
@@ -78,7 +77,7 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := ensureWritableDir(r.Context(), runsDir); err != nil {
+	if err := ensureWritableDir(r.Context(), runsDirDefault); err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": "degraded",
@@ -92,14 +91,11 @@ func (h *Handler) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 // ensureWritableDir verifies that path exists as a directory and is writable.
-// If the directory does not exist, it attempts to create it with 0755 perms.
-// It returns an error if the directory cannot be created or written to.
 func ensureWritableDir(ctx context.Context, path string) error {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}
 
-	// Quick writable check: create and remove a temp file in the directory.
 	f, err := os.CreateTemp(path, ".healthcheck-*")
 	if err != nil {
 		return err
@@ -137,8 +133,31 @@ func (h *Handler) handleScenariosUpload(w http.ResponseWriter, r *http.Request) 
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON"})
 		return
 	}
+	if !scenario.ValidScenarioID(req.ScenarioID) {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid scenarioId"})
+		return
+	}
+	if strings.TrimSpace(req.JSONL) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "jsonl is required"})
+		return
+	}
 
-	if err := h.scenarios.Save(r.Context(), req.ScenarioID, []byte(req.JSONL)); err != nil {
+	if err := os.MkdirAll(scenariosDirDefault, 0o755); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	tmp := filepath.Join(scenariosDirDefault, req.ScenarioID+".jsonl.tmp")
+	finalPath := filepath.Join(scenariosDirDefault, req.ScenarioID+".jsonl")
+	if err := os.WriteFile(tmp, []byte(req.JSONL), 0o644); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	if err := os.Rename(tmp, finalPath); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
@@ -157,15 +176,32 @@ func (h *Handler) handleScenariosList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := h.scenarios.List(r.Context())
+	entries, err := os.ReadDir(scenariosDirDefault)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]string{})
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 
+	items := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if filepath.Ext(name) != ".jsonl" {
+			continue
+		}
+		items = append(items, strings.TrimSuffix(name, ".jsonl"))
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(list)
+	_ = json.NewEncoder(w).Encode(items)
 }
 
 // --- Replay ---
@@ -187,9 +223,25 @@ type startReplayResponse struct {
 	Status string `json:"status"`
 }
 
+func maxRPSPerRun() int {
+	if raw := os.Getenv("MAX_RPS_PER_RUN"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultMaxRPSPerRun
+}
+
 func (h *Handler) handleReplayStart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.runs.IsShuttingDown() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "shutting_down"})
 		return
 	}
 
@@ -200,25 +252,27 @@ func (h *Handler) handleReplayStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := replay.StartOptions{
-		ScenarioID:  req.ScenarioID,
-		TargetBase:  req.TargetBase,
-		RPS:         req.RPS,
-		DurationSec: req.DurationSec,
-		Mode:        req.Mode,
-		Speed:       req.Speed,
-		MaxDelayMs:  req.MaxDelayMs,
-		StartFromTs: req.StartFromTs,
-		EndAtTs:     req.EndAtTs,
+	if req.RPS <= 0 || req.RPS > maxRPSPerRun() {
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_rps"})
+		return
 	}
 
-	runID, err := h.runs.Start(r.Context(), opts)
+	params := replay.StartParams{
+		ScenarioID:    req.ScenarioID,
+		TargetBaseURL: req.TargetBase,
+		RPS:           req.RPS,
+		Duration:      time.Duration(req.DurationSec) * time.Second,
+		Mode:          req.Mode,
+		Speed:         req.Speed,
+		MaxDelayMs:    int64(req.MaxDelayMs),
+		StartFromTs:   req.StartFromTs,
+		EndAtTs:       req.EndAtTs,
+	}
+
+	runID, err := h.runs.Start(params)
 	if err != nil {
-		if errors.Is(err, replay.ErrInvalidOptions) {
-			w.WriteHeader(http.StatusBadRequest)
-		} else {
-			w.WriteHeader(http.StatusInternalServerError)
-		}
+		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
@@ -249,8 +303,8 @@ func (h *Handler) handleReplayStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.runs.Stop(r.Context(), req.RunID); err != nil {
-		if errors.Is(err, replay.ErrRunNotFound) {
+	if err := h.runs.Stop(req.RunID); err != nil {
+		if strings.Contains(err.Error(), "run not found") {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -276,9 +330,9 @@ func (h *Handler) handleReplayStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status, err := h.runs.Status(r.Context(), runID)
+	status, err := h.runs.Status(runID)
 	if err != nil {
-		if errors.Is(err, replay.ErrRunNotFound) {
+		if strings.Contains(err.Error(), "run not found") {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -297,7 +351,18 @@ func (h *Handler) handleReplayRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	list, err := h.runs.List(r.Context())
+	limit := defaultRunsLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		v, err := strconv.Atoi(raw)
+		if err != nil || v <= 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid limit"})
+			return
+		}
+		limit = v
+	}
+
+	list, err := h.runs.ListRuns(limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
@@ -321,9 +386,9 @@ func (h *Handler) handleReplayReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	report, err := h.store.Load(r.Context(), runID)
+	report, err := h.runs.LoadReport(runID)
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		if errors.Is(err, os.ErrNotExist) {
 			w.WriteHeader(http.StatusNotFound)
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -333,5 +398,5 @@ func (h *Handler) handleReplayReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(report)
+	_ = json.NewEncoder(w).Encode(report)
 }

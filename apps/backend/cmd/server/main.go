@@ -7,8 +7,6 @@ import (
 
 	"incident-replay/backend/internal/httpapi"
 	"incident-replay/backend/internal/replay"
-	"incident-replay/backend/internal/scenario"
-	"incident-replay/backend/internal/store"
 )
 
 func main() {
@@ -17,11 +15,8 @@ func main() {
 		addr = ":8080"
 	}
 
-	scenarioSvc := scenario.NewService("data/scenarios")
-	runStore := store.NewFileStore("data/runs")
-	runner := replay.NewRunner(scenarioSvc, runStore)
-
-	h := httpapi.NewHandler(scenarioSvc, runner, runStore)
+	runner := replay.NewRunner()
+	h := httpapi.NewHandler(runner)
 
 	log.Printf("starting backend on %s", addr)
 	if err := http.ListenAndServe(addr, h); err != nil {
