@@ -19,3 +19,5 @@ bin/
 *.tfstate
 *.tfstate.*
 crash.log
+
+.cache/

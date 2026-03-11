@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 
 const RunReport: React.FC = () => {
   const location = useLocation();
@@ -10,7 +10,7 @@ const RunReport: React.FC = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const id = params.get('runId');
+    const id = params.get("runId");
     setRunId(id);
   }, [location.search]);
 
@@ -21,19 +21,24 @@ const RunReport: React.FC = () => {
     setReport(null);
 
     fetch(`/replay/report?runId=${encodeURIComponent(runId)}`)
-      .then(res => {
-        if (!res.ok) throw new Error(`Failed to load report: ${res.statusText}`);
+      .then((res) => {
+        if (!res.ok)
+          throw new Error(`Failed to load report: ${res.statusText}`);
         return res.json();
       })
-      .then(data => {
+      .then((data) => {
         setReport(data);
       })
-      .catch(e => setError(e.message || 'Failed to fetch report'))
+      .catch((e) => setError(e.message || "Failed to fetch report"))
       .finally(() => setLoading(false));
   }, [runId]);
 
   if (!runId) {
-    return <div><p>No runId specified in URL.</p></div>;
+    return (
+      <div>
+        <p>No runId specified in URL.</p>
+      </div>
+    );
   }
 
   return (
@@ -42,7 +47,7 @@ const RunReport: React.FC = () => {
       {loading && <div className="loading-spinner" aria-label="Loading"></div>}
       {error && <div className="error-message">{error}</div>}
       {report && (
-        <pre style={{whiteSpace: 'pre-wrap', wordBreak: 'break-word'}}>
+        <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
           {JSON.stringify(report, null, 2)}
         </pre>
       )}

@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
-	"incident-replay/backend/internal/replay"
+	"github.com/linkinshurik/incident-replay/internal/replay"
+	"github.com/linkinshurik/incident-replay/internal/scenario"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -18,6 +21,10 @@ import (
 const scenariosDataDir = "./data/scenarios"
 
 var validScenarioID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+var (
+	maxRPSPerRun = getEnvInt("MAX_RPS_PER_RUN", 200)
+)
 
 type Handler struct {
 	runner *replay.Runner
@@ -43,9 +50,23 @@ func (h *Handler) Routes() http.Handler {
 	mux.HandleFunc("/debug/echo", h.debugEcho)
 
 	mux.HandleFunc("/scenarios/upload", h.scenarioUpload)
+	mux.HandleFunc("/scenarios/upload-har", h.scenarioUploadHAR)
 	mux.HandleFunc("/scenarios/list", h.scenarioList)
 
 	return withJSON(withLogging(mux))
+}
+
+func getEnvInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	var iv int
+	_, err := fmt.Sscanf(v, "%d", &iv)
+	if err != nil || iv <= 0 {
+		return def
+	}
+	return iv
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
@@ -67,6 +88,12 @@ func (h *Handler) replayStart(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+
+	// Validate RPS: must be >0 and <= maxRPSPerRun
+	if req.RPS <= 0 || req.RPS > maxRPSPerRun {
+		http.Error(w, `{"error":"invalid_rps"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -262,9 +289,8 @@ func (h *Handler) scenarioUpload(w http.ResponseWriter, r *http.Request) {
 	// Safe filepath join
 	path := filepath.Join(scenariosDataDir, req.ScenarioID+".jsonl")
 
-	// Validate no ../ in final path
-	// fix: use filepath.Clean on path for prefix check
-	if !filepath.HasPrefix(filepath.Clean(path), filepath.Clean(scenariosDataDir)+string(filepath.Separator)) {
+	// Validate path is under scenariosDataDir (no path traversal)
+	if rel, err := filepath.Rel(scenariosDataDir, path); err != nil || strings.HasPrefix(rel, "..") {
 		http.Error(w, "invalid scenarioId path", http.StatusBadRequest)
 		return
 	}
@@ -277,6 +303,69 @@ func (h *Handler) scenarioUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "scenarioId": req.ScenarioID})
+}
+
+// POST /scenarios/upload-har
+// Accepts multipart form: scenarioId (form field), file (HAR file from Chrome DevTools).
+// Converts HAR to scenario JSONL (preserving request order and timestamps) and stores as <scenarioId>.jsonl.
+func (h *Handler) scenarioUploadHAR(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		http.Error(w, "failed to parse multipart form", http.StatusBadRequest)
+		return
+	}
+
+	scenarioID := r.FormValue("scenarioId")
+	if scenarioID == "" {
+		http.Error(w, "scenarioId is required", http.StatusBadRequest)
+		return
+	}
+	if !validScenarioID.MatchString(scenarioID) {
+		http.Error(w, "invalid scenarioId", http.StatusBadRequest)
+		return
+	}
+
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	harBytes, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "failed to read file", http.StatusBadRequest)
+		return
+	}
+
+	jsonl, err := scenario.HARToJSONL(harBytes)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = os.MkdirAll(scenariosDataDir, 0o755)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	path := filepath.Join(scenariosDataDir, scenarioID+".jsonl")
+	if rel, err := filepath.Rel(scenariosDataDir, path); err != nil || strings.HasPrefix(rel, "..") {
+		http.Error(w, "invalid scenarioId path", http.StatusBadRequest)
+		return
+	}
+
+	if err := os.WriteFile(path, jsonl, 0o644); err != nil {
+		http.Error(w, "failed to save scenario", http.StatusInternalServerError)
+		return
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "scenarioId": scenarioID})
 }
 
 // GET /scenarios/list returns JSON array of scenarioIds

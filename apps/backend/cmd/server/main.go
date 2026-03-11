@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"incident-replay/backend/internal/httpapi"
-	"incident-replay/backend/internal/replay"
+	"github.com/linkinshurik/incident-replay/internal/httpapi"
+	"github.com/linkinshurik/incident-replay/internal/replay"
 )
 
 func main() {

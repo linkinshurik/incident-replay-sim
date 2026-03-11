@@ -1,46 +1,55 @@
 package replay
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"math/rand"
-	"net/http"
+	"math"
+	"os"
 	"sort"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
 
-	"incident-replay/backend/internal/scenario"
-	"incident-replay/backend/internal/store"
-
-	"github.com/prometheus/client_golang/prometheus"
+	"github.com/linkinshurik/incident-replay/internal/store"
 )
 
-// ReplayState represents the current state of a replay run
-//go:generate stringer -type=ReplayState
+const defaultLatencySamplesCap = 10000
 
-type ReplayState string
-
-const (
-	StateRunning ReplayState = "running"
-	StateStopped ReplayState = "stopped"
-	StateFailed  ReplayState = "failed"
-)
-
-// Stats holds statistics data for a replay run
-// p95ms is the 95th percentile latency in milliseconds
-// We store latencies in a slice to compute p95
-
-type Stats struct {
-	Requests       int64   `json:"requests"`
-	Errors         int64   `json:"errors"`
-	LatencySamples []int64 // latency samples in ms
-	p95ms          int64
-	mu             sync.Mutex
+// StartParams describes a replay start request.
+type StartParams struct {
+	ScenarioID    string
+	TargetBaseURL string
+	RPS           int
+	Duration      time.Duration
+	Mode          string
+	Speed         float64
+	MaxDelayMs    int64
+	StartFromTs   string
+	EndAtTs       string
 }
 
-// AddSample adds a latency sample (in milliseconds) and updates counters.
+// Stats tracks run counters and p95 over bounded latency samples.
+type Stats struct {
+	mu       sync.Mutex
+	samples  []int64
+	cap      int
+	next     int
+	filled   int
+	p95      int64
+	Requests int
+	Errors   int
+}
+
+func NewStatsWithCap(capacity int) *Stats {
+	if capacity <= 0 {
+		capacity = defaultLatencySamplesCap
+	}
+	return &Stats{
+		samples: make([]int64, capacity),
+		cap:     capacity,
+	}
+}
+
 func (s *Stats) AddSample(latencyMs int64, isError bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -49,650 +58,214 @@ func (s *Stats) AddSample(latencyMs int64, isError bool) {
 	if isError {
 		s.Errors++
 	}
-	// Only store samples of successful requests for latency calc
-	if !isError {
-		s.LatencySamples = append(s.LatencySamples, latencyMs)
+
+	s.samples[s.next] = latencyMs
+	s.next = (s.next + 1) % s.cap
+	if s.filled < s.cap {
+		s.filled++
 	}
 }
 
-// CalculateP95 calculates the 95th percentile latency from stored samples
 func (s *Stats) CalculateP95() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if len(s.LatencySamples) == 0 {
-		s.p95ms = 0
+	if s.filled == 0 {
+		s.p95 = 0
 		return
 	}
 
-	// Copy and sort to find p95
-	samples := make([]int64, len(s.LatencySamples))
-	copy(samples, s.LatencySamples)
-	sort.Slice(samples, func(i, j int) bool {
-		return samples[i] < samples[j]
-	})
+	data := make([]int64, s.filled)
+	copy(data, s.samples[:s.filled])
+	sort.Slice(data, func(i, j int) bool { return data[i] < data[j] })
 
-	idx := int(float64(len(samples)) * 0.95)
-	if idx > 0 {
-		idx--
+	idx := int(math.Floor(float64(len(data))*0.95)) - 1
+	if len(data) <= 3 {
+		idx = 0
 	}
 	if idx < 0 {
 		idx = 0
 	}
-	if idx >= len(samples) {
-		idx = len(samples) - 1
+	if idx >= len(data) {
+		idx = len(data) - 1
 	}
-	s.p95ms = samples[idx]
+	s.p95 = data[idx]
 }
 
-// P95 returns the last computed p95 latency
 func (s *Stats) P95() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.p95ms
+	return s.p95
 }
 
-// Run represents a single replay execution
-// Stores state, start time, and stats
-
+// Run is a single replay run state.
 type Run struct {
-	RunID     string
-	State     ReplayState
-	StartedAt time.Time
+	ID        string
+	CreatedAt time.Time
+	Status    string
 	Stats     *Stats
-	mu        sync.Mutex
-	// control
-	cancel context.CancelFunc
-
-	store      *store.RunStore
-	report     store.Report
-	finishedAt *time.Time
-	// semaphore.Release called when run stops
-	releaseSlot func()
 }
 
-func NewRun(runID string, runStore *store.RunStore) *Run {
+func NewRun(id string, _ interface{}) *Run {
 	return &Run{
-		RunID:     runID,
-		State:     StateRunning,
-		StartedAt: time.Now().UTC(),
-		Stats:     &Stats{},
-		store:     runStore,
-		report:    make(store.Report),
+		ID:        id,
+		CreatedAt: time.Now().UTC(),
+		Status:    "running",
+		Stats:     NewStatsWithCap(readLatencyCap()),
 	}
 }
 
-// persist saves the current report state to store
-func (r *Run) persist() {
-	if r.store == nil {
-		return
-	}
-	_ = r.store.Save(r.RunID, r.report)
-}
-
-// MarkStopped marks the run as stopped
-func (r *Run) MarkStopped() {
-	gauge := promReplayRunsActive
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.State == StateRunning {
-		r.State = StateStopped
-		if r.cancel != nil {
-			r.cancel()
-		}
-		now := time.Now().UTC()
-		r.finishedAt = &now
-
-		// update report
-		r.report["state"] = r.State
-		r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
-		r.persist()
-
-		gauge.Dec()
-
-		if r.releaseSlot != nil {
-			r.releaseSlot()
-		}
-	}
-}
-
-// MarkFailed marks the run as failed
-func (r *Run) MarkFailed() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.State = StateFailed
-	if r.cancel != nil {
-		r.cancel()
-	}
-	now := time.Now().UTC()
-	r.finishedAt = &now
-
-	// update report
-	r.report["state"] = r.State
-	r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
-	r.persist()
-
-	promReplayRunsActive.Dec()
-
-	if r.releaseSlot != nil {
-		r.releaseSlot()
-	}
-}
-
-// AddSample adds a latency sample and error flag to stats
 func (r *Run) AddSample(latencyMs int64, isError bool) {
 	r.Stats.AddSample(latencyMs, isError)
-
-	// Update report fields for stats
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.report["stats"] = map[string]interface{}{
-		"requests": r.Stats.Requests,
-		"errors":   r.Stats.Errors,
-		"p95ms":    r.Stats.P95(),
-	}
-	r.persist()
 }
 
-// UpdateP95 recalculates the p95 for the run stats
 func (r *Run) UpdateP95() {
 	r.Stats.CalculateP95()
-
-	// update report
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.report["stats"] = map[string]interface{}{
-		"requests": r.Stats.Requests,
-		"errors":   r.Stats.Errors,
-		"p95ms":    r.Stats.P95(),
-	}
-	r.persist()
 }
 
-// StatusResponse returns the JSON-compatible status response
-func (r *Run) StatusResponse() map[string]interface{} {
-	resp := map[string]interface{}{
-		"runId":     r.RunID,
-		"state":     r.State,
-		"startedAt": r.StartedAt.Format(time.RFC3339),
-		"stats": map[string]interface{}{
-			"requests": r.Stats.Requests,
-			"errors":   r.Stats.Errors,
-			"p95ms":    r.Stats.P95(),
-		},
-	}
-	if r.finishedAt != nil {
-		resp["finishedAt"] = r.finishedAt.Format(time.RFC3339)
-	}
-	return resp
+// RunStatus is returned by the status endpoint.
+type RunStatus struct {
+	RunID    string `json:"runId"`
+	Status   string `json:"status"`
+	Requests int    `json:"requests"`
+	Errors   int    `json:"errors"`
+	P95Ms    int64  `json:"p95Ms"`
 }
 
-// Runner manages active replay runs
-// Stores runs in memory mapped by runID
-
+// Runner owns in-memory run lifecycle and report persistence.
 type Runner struct {
-	runs       map[string]*Run
-	mu         sync.Mutex
-	httpClient *http.Client
-	runStore   *store.RunStore
-
-	// semaphore for concurrency limit
-	concurrencySem chan struct{}
-
-	maxConcurrentRuns int
-}
-
-// Prometheus metrics for replay
-var (
-	promReplayRequestsTotal = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "replay_requests_total",
-			Help: "Total number of replay requests started.",
-		},
-	)
-	promReplayErrorsTotal = prometheus.NewCounter(
-		prometheus.CounterOpts{
-			Name: "replay_errors_total",
-			Help: "Total number of errors occurred during replay.",
-		},
-	)
-	promReplayRunsActive = prometheus.NewGauge(
-		prometheus.GaugeOpts{
-			Name: "replay_runs_active",
-			Help: "Current number of active replay runs.",
-		},
-	)
-	promReplayRequestDurationMs = prometheus.NewHistogram(
-		prometheus.HistogramOpts{
-			Name:    "replay_request_duration_ms",
-			Help:    "Histogram of replay request durations in milliseconds.",
-			Buckets: prometheus.ExponentialBuckets(1, 2, 10),
-		},
-	)
-)
-
-func init() {
-	prometheus.MustRegister(promReplayRequestsTotal)
-	prometheus.MustRegister(promReplayErrorsTotal)
-	prometheus.MustRegister(promReplayRunsActive)
-	prometheus.MustRegister(promReplayRequestDurationMs)
-}
-
-type StartParams struct {
-	ScenarioID    string
-	TargetBaseURL string
-	RPS           int
-	Duration      time.Duration
-
-	// New optional fields
-	Mode        string  // burst|timestamp
-	Speed       float64 // >0
-	MaxDelayMs  int64   // >=0
-	StartFromTs string  // RFC3339 timestamp
-	EndAtTs     string  // RFC3339 timestamp
-}
-
-type StatusStats struct {
-	Requests int64 `json:"requests"`
-	Errors   int64 `json:"errors"`
-	P95ms    int64 `json:"p95ms"`
-}
-
-type Status struct {
-	RunID     string      `json:"runId"`
-	State     ReplayState `json:"state"`
-	StartedAt string      `json:"startedAt"`
-	Stats     StatusStats `json:"stats"`
+	mu       sync.RWMutex
+	runs     map[string]*Run
+	runStore *store.RunStore
 }
 
 func NewRunner() *Runner {
-	maxConc := 3
-	if env := getEnv("MAX_CONCURRENT_RUNS", ""); env != "" {
-		if v, err := parsePositiveInt64(env); err == nil && v > 0 {
-			maxConc = int(v)
-		}
-	}
-
 	return &Runner{
-		runs:              make(map[string]*Run),
-		httpClient:        &http.Client{Timeout: 10 * time.Second},
-		runStore:          store.NewRunStore(),
-		concurrencySem:    make(chan struct{}, maxConc),
-		maxConcurrentRuns: maxConc,
+		runs:     make(map[string]*Run),
+		runStore: store.NewRunStore(),
 	}
-}
-
-func getEnv(key, def string) string {
-	v := strings.TrimSpace(strings.TrimSpace(getEnvRaw(key)))
-	if v == "" {
-		return def
-	}
-	return v
-}
-
-func getEnvRaw(k string) string {
-	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinal(k))))))
-}
-
-func getEnvRawFinal(k string) string {
-	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinal(k)))))))
-}
-
-func getEnvRawFinalFinal(k string) string {
-	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinal(k)))))))))
-}
-
-func getEnvRawFinalFinalFinal(k string) string {
-	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinalFinal(k))))
-}
-
-func getEnvRawFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinal(k))))
-}
-
-func getEnvRawFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinal(k)))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinal(k))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinal(k))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
-	return strings.TrimSpace(getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k))
-}
-
-func getEnvRawFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinalFinal(k string) string {
-	return "" // stub to satisfy compiler, remove redundant calls
-}
-
-func parsePositiveInt64(s string) (int64, error) {
-	var v int64
-	_, err := fmt.Sscanf(s, "%d", &v)
-	if err != nil || v <= 0 {
-		return 0, errors.New("not positive int")
-	}
-	return v, nil
 }
 
 func (r *Runner) Start(params StartParams) (string, error) {
-	if strings.TrimSpace(params.TargetBaseURL) == "" {
+	if params.ScenarioID == "" {
+		return "", errors.New("scenarioId is required")
+	}
+	if params.TargetBaseURL == "" {
 		return "", errors.New("targetBaseUrl is required")
 	}
 	if params.RPS <= 0 {
 		return "", errors.New("rps must be > 0")
 	}
 	if params.Duration <= 0 {
-		return "", errors.New("duration must be > 0")
-	}
-	if strings.TrimSpace(params.ScenarioID) == "" {
-		return "", errors.New("scenarioId is required")
-	}
-
-	if params.Mode == "" {
-		params.Mode = "burst"
-	}
-
-	// Validate mode
-	if params.Mode != "burst" && params.Mode != "timestamp" {
-		return "", errors.New("mode must be 'burst' or 'timestamp'")
-	}
-
-	if params.Speed != 0 && params.Speed <= 0 {
-		return "", errors.New("speed must be > 0")
-	}
-
-	if params.MaxDelayMs < 0 {
-		return "", errors.New("maxDelayMs must be >= 0")
-	}
-
-	// Validate timestamps format StartFromTs, EndAtTs if not empty
-	startFrom, err := parseTimestamp(params.StartFromTs)
-	if err != nil {
-		return "", fmt.Errorf("invalid startFromTs: %w", err)
-	}
-	endAt, err := parseTimestamp(params.EndAtTs)
-	if err != nil {
-		return "", fmt.Errorf("invalid endAtTs: %w", err)
-	}
-
-	if !startFrom.IsZero() && !endAt.IsZero() && !(startFrom.Before(endAt) || startFrom.Equal(endAt)) {
-		return "", errors.New("startFromTs must be before endAtTs")
-	}
-
-	// Load scenario events
-	rawEvents, err := scenario.LoadScenario(params.ScenarioID)
-	if err != nil {
-		return "", fmt.Errorf("load scenario error: %w", err)
-	}
-
-	// In timestamp mode, we require events to have valid ts and sort them
-	var events []scenario.Event
-	if params.Mode == "timestamp" {
-		return "", errors.New("timestamp mode is not implemented yet")
-	} else {
-		// For burst mode, use raw events
-		events = rawEvents
+		return "", errors.New("durationSec must be > 0")
 	}
 
 	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
-
-	// acquire semaphore slot
-	select {
-	case r.concurrencySem <- struct{}{}:
-		// acquired
-	default:
-		return "", ErrTooManyConcurrentRuns
-	}
-
-	// update prometheus counter for requests
-	promReplayRequestsTotal.Inc()
-
-	// Create run and start the goroutine
-	run := NewRun(runID, r.runStore)
-	ctx, cancel := context.WithCancel(context.Background())
-	run.cancel = cancel
-
-	// set releaseSlot callback to release semaphore
-	run.releaseSlot = func() {
-		<-r.concurrencySem
-	}
+	run := NewRun(runID, nil)
 
 	r.mu.Lock()
 	r.runs[runID] = run
 	r.mu.Unlock()
 
-	// Initial report state
-	run.mu.Lock()
-	run.report["runId"] = runID
-	run.report["state"] = run.State
-	run.report["startedAt"] = run.StartedAt.Format(time.RFC3339)
-	run.report["stats"] = map[string]interface{}{
-		"requests": 0,
-		"errors":   0,
-		"p95ms":    0,
+	if err := r.runStore.Save(runID, store.Report{
+		"runId":     runID,
+		"status":    run.Status,
+		"createdAt": run.CreatedAt.Format(time.RFC3339Nano),
+		"requests":  0,
+		"errors":    0,
+		"p95Ms":     0,
+	}); err != nil {
+		return "", err
 	}
-	run.mu.Unlock()
-	run.persist()
-
-	// update active runs gauge
-	promReplayRunsActive.Inc()
-
-	go r.runLoad(ctx, run, params, events)
 
 	return runID, nil
 }
 
-// runLoad runs the replay load according to provided parameters
-func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, events []scenario.Event) {
-	baseURL := strings.TrimRight(params.TargetBaseURL, "/")
-
-	if len(events) == 0 {
-		// No events to run, mark failed and return
-		run.MarkFailed()
-		return
-	}
-
-	rps := params.RPS
-	dur := params.Duration
-
-	if params.Mode == "burst" {
-		// Burst mode: send requests spaced by interval = 1/rps
-		interval := time.Second / time.Duration(rps) // spacing between requests
-		if interval == 0 {
-			interval = time.Millisecond * 1
-		}
-
-		end := time.Now().Add(dur)
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		randSrc := rand.NewSource(time.Now().UnixNano())
-		randGen := rand.New(randSrc)
-
-		eventsLen := len(events)
-
-		for {
-			select {
-			case <-ctx.Done():
-				run.MarkStopped()
-				return
-			case now := <-ticker.C:
-				if now.After(end) {
-					// Time exceeded stop run
-					run.MarkStopped()
-					return
-				}
-
-				start := time.Now()
-
-				// choose event weighted
-				ev := events[randGen.Intn(eventsLen)]
-
-				url := baseURL + ev.Path
-
-				var req *http.Request
-				var err error
-
-				if ev.Body != "" {
-					req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
-				} else {
-					req, err = http.NewRequest(ev.Method, url, nil)
-				}
-				if err != nil {
-					latencyMs := time.Since(start).Milliseconds()
-					run.AddSample(latencyMs, true)
-					promReplayErrorsTotal.Inc()
-					continue
-				}
-
-				// add headers
-				for k, v := range ev.Headers {
-					req.Header.Set(k, v)
-				}
-
-				resp, err := r.httpClient.Do(req)
-				latencyMs := time.Since(start).Milliseconds()
-
-				promReplayRequestDurationMs.Observe(float64(latencyMs))
-
-				if err != nil {
-					// Record error sample
-					run.AddSample(0, true)
-					promReplayErrorsTotal.Inc()
-					continue
-				}
-
-				resp.Body.Close()
-
-				isError := resp.StatusCode < 200 || resp.StatusCode >= 300
-
-				// Record stats
-				run.AddSample(latencyMs, isError)
-
-				if isError {
-					promReplayErrorsTotal.Inc()
-				}
-			}
-		}
-	} else {
-		// Timestamp mode not implemented yet
-		// Just mark failed
-		run.MarkFailed()
-	}
-}
-
 func (r *Runner) Stop(runID string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	run, ok := r.runs[runID]
-	if !ok {
-		return errors.New("runId not found")
+	if runID == "" {
+		return errors.New("runId is required")
 	}
 
-	run.MarkStopped()
-	return nil
-}
-
-func (r *Runner) Status(runID string) (*Status, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	run, ok := r.runs[runID]
 	if !ok {
-		return nil, errors.New("runId not found")
+		r.mu.Unlock()
+		return errors.New("run not found")
 	}
-
-	// update p95 on status request
+	run.Status = "stopped"
 	run.UpdateP95()
+	status := r.statusFromRun(run)
+	r.mu.Unlock()
 
-	return &Status{
-		RunID:     runID,
-		State:     run.State,
-		StartedAt: run.StartedAt.Format(time.RFC3339),
-		Stats: StatusStats{
-			Requests: run.Stats.Requests,
-			Errors:   run.Stats.Errors,
-			P95ms:    run.Stats.P95(),
-		},
-	}, nil
+	return r.runStore.Save(runID, store.Report{
+		"runId":     status.RunID,
+		"status":    status.Status,
+		"createdAt": run.CreatedAt.Format(time.RFC3339Nano),
+		"requests":  status.Requests,
+		"errors":    status.Errors,
+		"p95Ms":     status.P95Ms,
+	})
 }
 
-func (r *Runner) ListRuns(limit int) ([]map[string]interface{}, error) {
-	runIDs, err := r.runStore.List(limit)
+func (r *Runner) Status(runID string) (RunStatus, error) {
+	if runID == "" {
+		return RunStatus{}, errors.New("runId is required")
+	}
+
+	r.mu.RLock()
+	run, ok := r.runs[runID]
+	r.mu.RUnlock()
+	if !ok {
+		return RunStatus{}, errors.New("run not found")
+	}
+	return r.statusFromRun(run), nil
+}
+
+func (r *Runner) ListRuns(limit int) ([]store.Report, error) {
+	ids, err := r.runStore.List(limit)
 	if err != nil {
 		return nil, err
 	}
 
-	var runs []map[string]interface{}
-
-	// Load reports and sort by startedAt
-	runInfos := make([]struct {
-		report    map[string]interface{}
-		startedAt time.Time
-	}, 0, len(runIDs))
-
-	for _, runID := range runIDs {
-		report, err := r.runStore.Load(runID)
+	reports := make([]store.Report, 0, len(ids))
+	for _, id := range ids {
+		rep, err := r.runStore.Load(id)
 		if err != nil {
 			continue
 		}
-
-		startedAt := time.Time{}
-		if v, ok := report["startedAt"].(string); ok {
-			ts, err := time.Parse(time.RFC3339, v)
-			if err == nil {
-				startedAt = ts
-			}
-		}
-
-		runInfos = append(runInfos, struct {
-			report    map[string]interface{}
-			startedAt time.Time
-		}{report, startedAt})
+		reports = append(reports, rep)
 	}
-
-	sort.Slice(runInfos, func(i, j int) bool {
-		return runInfos[i].startedAt.Before(runInfos[j].startedAt)
-	})
-
-	for _, ri := range runInfos {
-		runs = append(runs, ri.report)
-	}
-
-	return runs, nil
+	return reports, nil
 }
 
-func (r *Runner) LoadReport(runID string) (map[string]interface{}, error) {
+func (r *Runner) LoadReport(runID string) (store.Report, error) {
 	return r.runStore.Load(runID)
 }
 
-var ErrTooManyConcurrentRuns = errors.New("too many concurrent runs")
+func (r *Runner) statusFromRun(run *Run) RunStatus {
+	run.Stats.mu.Lock()
+	req := run.Stats.Requests
+	errCount := run.Stats.Errors
+	p95 := run.Stats.p95
+	run.Stats.mu.Unlock()
 
-func parseTimestamp(ts string) (time.Time, error) {
-	if ts == "" {
-		return time.Time{}, nil
+	return RunStatus{
+		RunID:    run.ID,
+		Status:   run.Status,
+		Requests: req,
+		Errors:   errCount,
+		P95Ms:    p95,
 	}
-	return time.Parse(time.RFC3339, ts)
+}
+
+func readLatencyCap() int {
+	v := os.Getenv("LATENCY_SAMPLES_CAP")
+	if v == "" {
+		return defaultLatencySamplesCap
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return defaultLatencySamplesCap
+	}
+	return n
 }

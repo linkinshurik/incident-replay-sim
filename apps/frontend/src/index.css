@@ -88,6 +88,23 @@ form {
   max-width: 400px;
 }
 
+.upload-section {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid #eee;
+}
+
+.upload-section:last-of-type {
+  border-bottom: none;
+}
+
+.hint {
+  color: #555;
+  font-size: 0.9rem;
+  margin: 0 0 12px 0;
+  max-width: 520px;
+}
+
 .error-message {
   color: red;
   font-size: 0.9rem;
