@@ -1,49 +1,203 @@
 ==> fmt (backend)
 ==> fmt (frontend)
 
-added 493 packages, and audited 494 packages in 5s
-
-140 packages are looking for funding
-  run `npm fund` for details
-
-35 vulnerabilities (1 low, 8 moderate, 26 high)
-
-To address issues that do not require attention, run:
-  npm audit fix
-
-To address all issues possible (including breaking changes), run:
-  npm audit fix --force
-
-Some issues need review, and may require choosing
-a different dependency.
-
-Run `npm audit` for details.
-
 > incident-replay-frontend@0.1.0 fmt
-> prettier --write './src/**/*.{ts,tsx}'
+> npx --yes prettier --write './src/**/*.{ts,tsx}'
 
-src/App.tsx 96ms
-src/main.tsx 2ms
-src/pages/RunReport.tsx 9ms
-src/pages/Runs.tsx 9ms
-src/pages/Scenarios.tsx 7ms
-src/pages/StartReplay.tsx 17ms
+src/App.tsx 188ms
+src/main.tsx 4ms
+src/pages/RunReport.tsx 20ms
+src/pages/Runs.tsx 22ms
+src/pages/Scenarios.tsx 23ms
+src/pages/StartReplay.tsx 28ms
 ==> lint (backend)
+==> lint (frontend)
 
-npm warn deprecated inflight@1.0.6: This module is not supported, and leaks memory. Do not use it. Check out lru-cache if you want a good and tested way to coalesce async requests by a key value, which is much more comprehensive and powerful.
-npm warn deprecated @humanwhocodes/config-array@0.13.0: Use @eslint/config-array instead
-npm warn deprecated rimraf@3.0.2: Rimraf versions prior to v4 are no longer supported
-npm warn deprecated glob@7.2.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
-npm warn deprecated @humanwhocodes/object-schema@2.0.3: Use @eslint/object-schema instead
-npm warn deprecated eslint@8.57.1: This version is no longer supported. Please see https://eslint.org/version-support for other options.
-verifying go.opentelemetry.io/otel@v1.23.0/go.mod: checksum mismatch
-	downloaded: h1:YCycw9ZeKhcJFrb34iVSkyT0iczq/zYDtZYFufObyB0=
-	go.sum:     h1:LW7jX0ztIj3JimmyFidWIvAP5D+JPAJ10TgIqIJX/Y6o=
+> incident-replay-frontend@0.1.0 lint
+> eslint './src/**/*.{ts,tsx}'
 
-SECURITY ERROR
-This download does NOT match an earlier download recorded in go.sum.
-The bits may have been replaced on the origin server, or an attacker may
-have intercepted the download attempt.
+==> test (backend)
+?   	incident-replay/backend/cmd/server	[no test files]
+ok  	incident-replay/backend/internal/httpapi	(cached)
+ok  	incident-replay/backend/internal/replay	(cached)
+ok  	incident-replay/backend/internal/scenario	(cached)
+ok  	incident-replay/backend/internal/store	(cached)
+==> test (frontend)
 
-For more information, see 'go help module-auth'.
-make: *** [lint] Error 1
+> incident-replay-frontend@0.1.0 test
+> jest
+
+No tests found, exiting with code 1
+Run with `--passWithNoTests` to exit with code 0
+In /Users/shurik/Arkadia/incident-replay-sim/apps/frontend
+  12 files checked.
+  testMatch: **/__tests__/**/*.[jt]s?(x), **/?(*.)+(spec|test).[tj]s?(x) - 0 matches
+  testPathIgnorePatterns: /node_modules/ - 12 matches
+  testRegex:  - 0 matches
+Pattern:  - 0 matches
+==> build (backend)
+==> build (frontend)
+
+> incident-replay-frontend@0.1.0 build
+> tsc && vite build
+
+vite v4.5.14 building for production...
+transforming...
+✓ 39 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.39 kB │ gzip:  0.27 kB
+dist/assets/index-9c11c1db.css    1.62 kB │ gzip:  0.73 kB
+dist/assets/index-74a274ce.js   174.54 kB │ gzip: 56.56 kB
+✓ built in 929ms
+==> starting backend on :8080
+==> waiting for backend
+backend is up
+==> running k6
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+
+     execution: local
+        script: smoke.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 1 max VUs, 1m0s max duration (incl. graceful stop):
+              * default: 1 looping VUs for 30s (gracefulStop: 30s)
+
+
+running (0m01.0s), 1/1 VUs, 4202 complete and 0 interrupted iterations
+default   [   3% ] 1 VUs  01.0s/30s
+
+running (0m02.0s), 1/1 VUs, 8573 complete and 0 interrupted iterations
+default   [   7% ] 1 VUs  02.0s/30s
+
+running (0m03.0s), 1/1 VUs, 12956 complete and 0 interrupted iterations
+default   [  10% ] 1 VUs  03.0s/30s
+
+running (0m04.0s), 1/1 VUs, 17482 complete and 0 interrupted iterations
+default   [  13% ] 1 VUs  04.0s/30s
+
+running (0m05.0s), 1/1 VUs, 22097 complete and 0 interrupted iterations
+default   [  17% ] 1 VUs  05.0s/30s
+
+running (0m06.0s), 1/1 VUs, 26725 complete and 0 interrupted iterations
+default   [  20% ] 1 VUs  06.0s/30s
+
+running (0m07.0s), 1/1 VUs, 31183 complete and 0 interrupted iterations
+default   [  23% ] 1 VUs  07.0s/30s
+
+running (0m08.0s), 1/1 VUs, 35773 complete and 0 interrupted iterations
+default   [  27% ] 1 VUs  08.0s/30s
+
+running (0m09.0s), 1/1 VUs, 40634 complete and 0 interrupted iterations
+default   [  30% ] 1 VUs  09.0s/30s
+
+running (0m10.0s), 1/1 VUs, 45497 complete and 0 interrupted iterations
+default   [  33% ] 1 VUs  10.0s/30s
+
+running (0m11.0s), 1/1 VUs, 50441 complete and 0 interrupted iterations
+default   [  37% ] 1 VUs  11.0s/30s
+
+running (0m12.0s), 1/1 VUs, 55582 complete and 0 interrupted iterations
+default   [  40% ] 1 VUs  12.0s/30s
+
+running (0m13.0s), 1/1 VUs, 60597 complete and 0 interrupted iterations
+default   [  43% ] 1 VUs  13.0s/30s
+
+running (0m14.0s), 1/1 VUs, 65463 complete and 0 interrupted iterations
+default   [  47% ] 1 VUs  14.0s/30s
+
+running (0m15.0s), 1/1 VUs, 70427 complete and 0 interrupted iterations
+default   [  50% ] 1 VUs  15.0s/30s
+
+running (0m16.0s), 1/1 VUs, 75545 complete and 0 interrupted iterations
+default   [  53% ] 1 VUs  16.0s/30s
+
+running (0m17.0s), 1/1 VUs, 80601 complete and 0 interrupted iterations
+default   [  57% ] 1 VUs  17.0s/30s
+
+running (0m18.0s), 1/1 VUs, 85685 complete and 0 interrupted iterations
+default   [  60% ] 1 VUs  18.0s/30s
+
+running (0m19.0s), 1/1 VUs, 90451 complete and 0 interrupted iterations
+default   [  63% ] 1 VUs  19.0s/30s
+
+running (0m20.0s), 1/1 VUs, 94597 complete and 0 interrupted iterations
+default   [  67% ] 1 VUs  20.0s/30s
+
+running (0m21.0s), 1/1 VUs, 98812 complete and 0 interrupted iterations
+default   [  70% ] 1 VUs  21.0s/30s
+
+running (0m22.0s), 1/1 VUs, 103462 complete and 0 interrupted iterations
+default   [  73% ] 1 VUs  22.0s/30s
+
+running (0m23.0s), 1/1 VUs, 108183 complete and 0 interrupted iterations
+default   [  77% ] 1 VUs  23.0s/30s
+
+running (0m24.0s), 1/1 VUs, 112570 complete and 0 interrupted iterations
+default   [  80% ] 1 VUs  24.0s/30s
+
+running (0m25.0s), 1/1 VUs, 117573 complete and 0 interrupted iterations
+default   [  83% ] 1 VUs  25.0s/30s
+
+running (0m26.0s), 1/1 VUs, 123067 complete and 0 interrupted iterations
+default   [  87% ] 1 VUs  26.0s/30s
+
+running (0m27.0s), 1/1 VUs, 128311 complete and 0 interrupted iterations
+default   [  90% ] 1 VUs  27.0s/30s
+
+running (0m28.0s), 1/1 VUs, 133535 complete and 0 interrupted iterations
+default   [  93% ] 1 VUs  28.0s/30s
+
+running (0m29.0s), 1/1 VUs, 138583 complete and 0 interrupted iterations
+default   [  97% ] 1 VUs  29.0s/30s
+
+running (0m30.0s), 1/1 VUs, 143704 complete and 0 interrupted iterations
+default   [ 100% ] 1 VUs  30.0s/30s
+
+
+  █ THRESHOLDS 
+
+    http_req_failed
+    ✗ 'rate<0.35' rate=100.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 143732  4791.046225/s
+    checks_succeeded...: 0.00%   0 out of 143732
+    checks_failed......: 100.00% 143732 out of 143732
+
+    ✗ /scenarios/upload 200
+      ↳  0% — ✓ 0 / ✗ 143732
+
+    HTTP
+    http_req_duration....: avg=131.17µs min=79µs     med=106µs    max=49.88ms p(90)=208µs    p(95)=248µs   
+    http_req_failed......: 100.00% 143732 out of 143732
+    http_reqs............: 143732  4791.046225/s
+
+    EXECUTION
+    iteration_duration...: avg=203.88µs min=132.82µs med=168.21µs max=50.06ms p(90)=305.79µs p(95)=368.25µs
+    iterations...........: 143732  4791.046225/s
+    vus..................: 1       min=1                max=1
+    vus_max..............: 1       min=1                max=1
+
+    NETWORK
+    data_received........: 25 MB   843 kB/s
+    data_sent............: 69 MB   2.3 MB/s
+
+
+
+
+running (0m30.0s), 0/1 VUs, 143732 complete and 0 interrupted iterations
+default ✓ [ 100% ] 1 VUs  30s
+==> stopping backend
+==> k6 smoke OK
+==> CI OK
+
+time="2026-02-21T11:48:46+01:00" level=error msg="thresholds on metrics 'http_req_failed' have been crossed"

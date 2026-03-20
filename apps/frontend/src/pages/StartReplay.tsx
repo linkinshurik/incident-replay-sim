@@ -1,5 +1,17 @@
 import React, { useState } from "react";
 
+type StartReplayPayload = {
+  scenarioId: string;
+  targetBaseUrl: string;
+  rps: number;
+  durationSec: number;
+  mode: "burst" | "timestamp";
+  speed: number;
+  maxDelayMs: number;
+  startFromTs?: string;
+  endAtTs?: string;
+};
+
 const StartReplay: React.FC = () => {
   const [scenarioId, setScenarioId] = useState("");
   const [targetBaseUrl, setTargetBaseUrl] = useState("");
@@ -53,7 +65,7 @@ const StartReplay: React.FC = () => {
       }
     }
 
-    const payload: any = {
+    const payload: StartReplayPayload = {
       scenarioId,
       targetBaseUrl,
       rps,
@@ -76,19 +88,24 @@ const StartReplay: React.FC = () => {
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
-        let errText = await res.text();
+        const errText = await res.text();
         setError(`Failed to start replay: ${res.statusText} ${errText}`);
         setLoading(false);
         return;
       }
-      const data = await res.json();
-      if (data.runId) {
+      const data: unknown = await res.json();
+      if (
+        typeof data === "object" &&
+        data !== null &&
+        "runId" in data &&
+        typeof data.runId === "string"
+      ) {
         setRunId(data.runId);
       } else {
         setError("No runId returned");
       }
-    } catch (e: any) {
-      setError(e.message || "Failed to start replay");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to start replay");
     } finally {
       setLoading(false);
     }

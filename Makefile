@@ -18,19 +18,19 @@ lint: ## Lint all (Go + Frontend)
 	@echo "==> lint (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && go vet ./...); else echo "skip: no go.mod"; fi
 	@echo "==> lint (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm run lint || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && [ -d node_modules ] || npm install); (cd $(FRONTEND_DIR) && npm run lint || true); else echo "skip: no package.json"; fi
 
 test: ## Run tests (Go + Frontend)
 	@echo "==> test (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && go test ./...); else echo "skip: no go.mod"; fi
 	@echo "==> test (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm test || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && [ -d node_modules ] || npm install); (cd $(FRONTEND_DIR) && npm test || true); else echo "skip: no package.json"; fi
 
 build: ## Build artifacts (backend + frontend)
 	@echo "==> build (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && go build ./...); else echo "skip: no go.mod"; fi
 	@echo "==> build (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm run build || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && [ -d node_modules ] || npm install); (cd $(FRONTEND_DIR) && npm run build || true); else echo "skip: no package.json"; fi
 
 run-backend: ## Run backend locally (expects apps/backend cmd/main.go later)
 	@echo "==> run backend"
@@ -62,6 +62,14 @@ k6-smoke: ## Run k6 smoke test (starts backend temporarily)
 	@kill $$(cat .backend.pid) >/dev/null 2>&1 || true
 	@rm -f .backend.pid
 	@echo "==> k6 smoke OK"
+
+helm-lint: ## Run helm lint on infra/helm/incident-replay
+	@if ! command -v helm >/dev/null 2>&1; then echo "skip: helm not installed"; exit 0; fi
+	@helm lint infra/helm/incident-replay
+
+helm-template: ## Render helm template for infra/helm/incident-replay
+	@if ! command -v helm >/dev/null 2>&1; then echo "skip: helm not installed"; exit 0; fi
+	@helm template incident-replay infra/helm/incident-replay
 
 ci: fmt lint test build k6-smoke ## Full local CI pipeline
 	@echo "==> CI OK"

@@ -1,21 +1,654 @@
 package replay
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"math"
+	"math/rand"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/linkinshurik/incident-replay/internal/store"
+	"incident-replay/backend/internal/scenario"
+	"incident-replay/backend/internal/store"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// ReplayState represents the current state of a replay run
+//go:generate stringer -type=ReplayState
+
+type ReplayState string
+
+const (
+	StateRunning ReplayState = "running"
+	StateStopped ReplayState = "stopped"
+	StateFailed  ReplayState = "failed"
 )
 
 const defaultLatencySamplesCap = 10000
 
-// StartParams describes a replay start request.
+var latencySamplesCap = loadLatencySamplesCap()
+
+func loadLatencySamplesCap() int {
+	if val, ok := os.LookupEnv("LATENCY_SAMPLES_CAP"); ok {
+		if v, err := strconv.Atoi(val); err == nil && v > 0 {
+			return v
+		}
+	}
+	return defaultLatencySamplesCap
+}
+
+// Stats holds statistics data for a replay run
+// p95ms is the 95th percentile latency in milliseconds
+// We store latencies in a slice to compute p95
+
+type Stats struct {
+	Requests       int64   `json:"requests"`
+	Errors         int64   `json:"errors"`
+	LatencySamples []int64 // latency samples in ms
+	latencyHead    int
+	p95ms          int64
+	mu             sync.Mutex
+}
+
+// AddSample adds a latency sample (in milliseconds) and updates counters.
+func (s *Stats) AddSample(latencyMs int64, isError bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.Requests++
+	if isError {
+		s.Errors++
+	}
+	// Only store samples of successful requests for latency calc
+	if !isError {
+		if len(s.LatencySamples) < latencySamplesCap {
+			s.LatencySamples = append(s.LatencySamples, latencyMs)
+		} else if latencySamplesCap > 0 {
+			s.LatencySamples[s.latencyHead] = latencyMs
+			s.latencyHead = (s.latencyHead + 1) % latencySamplesCap
+		}
+	}
+}
+
+// CalculateP95 calculates the 95th percentile latency from stored samples
+func (s *Stats) CalculateP95() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.LatencySamples) == 0 {
+		s.p95ms = 0
+		return
+	}
+
+	// Copy and sort to find p95
+	samples := make([]int64, len(s.LatencySamples))
+	copy(samples, s.LatencySamples)
+	sort.Slice(samples, func(i, j int) bool {
+		return samples[i] < samples[j]
+	})
+
+	idx := int(float64(len(samples)) * 0.95)
+	if idx > 0 {
+		idx--
+	}
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(samples) {
+		idx = len(samples) - 1
+	}
+	s.p95ms = samples[idx]
+}
+
+// P95 returns the last computed p95 latency
+func (s *Stats) P95() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.p95ms
+}
+
+// Run represents a single replay execution
+// Stores state, start time, and stats
+
+type Run struct {
+	RunID     string
+	State     ReplayState
+	StartedAt time.Time
+	Stats     *Stats
+	mu        sync.Mutex
+	// control
+	cancel context.CancelFunc
+
+	store      *store.RunStore
+	report     store.Report
+	finishedAt *time.Time
+	// semaphore release func for concurrency control
+	releaseSlot func()
+
+	mode string
+}
+
+func NewRun(runID string, runStore *store.RunStore) *Run {
+	return &Run{
+		RunID:     runID,
+		State:     StateRunning,
+		StartedAt: time.Now().UTC(),
+		Stats:     &Stats{},
+		store:     runStore,
+		report:    make(store.Report),
+	}
+}
+
+// persist saves the current report state to store
+func (r *Run) persist() {
+	if r.store == nil {
+		return
+	}
+	_ = r.store.Save(r.RunID, r.report)
+}
+
+// recordCompletionMetrics records duration histogram and total counter.
+func (r *Run) recordCompletionMetrics(reason string) {
+	mode := r.mode
+	if mode == "" {
+		mode = "unknown"
+	}
+
+	var finished time.Time
+	if r.finishedAt != nil {
+		finished = *r.finishedAt
+	} else {
+		finished = time.Now().UTC()
+	}
+	durSec := finished.Sub(r.StartedAt).Seconds()
+
+	promReplayRunDurationSeconds.WithLabelValues(mode).Observe(durSec)
+
+	if reason != "" {
+		promReplayRunsFailedTotal.WithLabelValues(mode, reason).Inc()
+	}
+}
+
+// MarkStopped marks the run as stopped
+func (r *Run) MarkStopped() {
+	gauge := promReplayRunsActive
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.State == StateRunning {
+		r.State = StateStopped
+		if r.cancel != nil {
+			r.cancel()
+		}
+		now := time.Now().UTC()
+		r.finishedAt = &now
+
+		// update report
+		r.report["state"] = r.State
+		r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+		r.persist()
+
+		if r.releaseSlot != nil {
+			r.releaseSlot()
+		}
+
+		gauge.Dec()
+
+		// metrics outside of critical section
+	}
+
+	go r.recordCompletionMetrics("")
+}
+
+// MarkFailed marks the run as failed
+func (r *Run) MarkFailed() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.State = StateFailed
+	if r.cancel != nil {
+		r.cancel()
+	}
+	now := time.Now().UTC()
+	r.finishedAt = &now
+
+	// update report
+	r.report["state"] = r.State
+	r.report["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+	if r.releaseSlot != nil {
+		r.releaseSlot()
+	}
+
+	r.persist()
+
+	promReplayRunsActive.Dec()
+
+	go r.recordCompletionMetrics("failed")
+}
+
+// AddSample adds a latency sample and error flag to stats
+func (r *Run) AddSample(latencyMs int64, isError bool) {
+	r.Stats.AddSample(latencyMs, isError)
+
+	// Update report fields for stats
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.report["stats"] = map[string]interface{}{
+		"requests": r.Stats.Requests,
+		"errors":   r.Stats.Errors,
+		"p95ms":    r.Stats.P95(),
+	}
+	r.persist()
+}
+
+// UpdateP95 recalculates the p95 for the run stats
+func (r *Run) UpdateP95() {
+	r.Stats.CalculateP95()
+
+	// update report
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.report["stats"] = map[string]interface{}{
+		"requests": r.Stats.Requests,
+		"errors":   r.Stats.Errors,
+		"p95ms":    r.Stats.P95(),
+	}
+	r.persist()
+}
+
+// StatusResponse returns the JSON-compatible status response
+func (r *Run) StatusResponse() map[string]interface{} {
+	resp := map[string]interface{}{
+		"runId":     r.RunID,
+		"state":     r.State,
+		"startedAt": r.StartedAt.Format(time.RFC3339),
+		"stats": map[string]interface{}{
+			"requests": r.Stats.Requests,
+			"errors":   r.Stats.Errors,
+			"p95ms":    r.Stats.P95(),
+		},
+	}
+	if r.finishedAt != nil {
+		resp["finishedAt"] = r.finishedAt.Format(time.RFC3339)
+	}
+	return resp
+}
+
+// Runner manages active replay runs
+// Stores runs in memory mapped by runID
+
+type Runner struct {
+	runs       map[string]*Run
+	mu         sync.Mutex
+	httpClient *http.Client
+	runStore   *store.RunStore
+	// concurrency limiting semaphore (channel) for max concurrent runs
+	semaphore    chan struct{}
+	shuttingDown atomic.Bool
+}
+
+// Prometheus metrics for per-request stats (kept for backwards compatibility)
+var (
+	promReplayRequestsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "replay_requests_total",
+			Help: "Total number of replay HTTP requests sent.",
+		},
+	)
+	promReplayErrorsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "replay_errors_total",
+			Help: "Total number of replay HTTP request errors.",
+		},
+	)
+	promReplayRequestDurationMs = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "replay_request_duration_ms",
+			Help:    "Histogram of replay HTTP request durations in milliseconds.",
+			Buckets: prometheus.ExponentialBuckets(1, 2, 10),
+		},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(promReplayRequestsTotal)
+	prometheus.MustRegister(promReplayErrorsTotal)
+	prometheus.MustRegister(promReplayRequestDurationMs)
+}
+
+func NewRunner() *Runner {
+	maxConcurrent := 3 // default
+	if val, ok := os.LookupEnv("MAX_CONCURRENT_RUNS"); ok {
+		if v, err := strconv.Atoi(val); err == nil && v > 0 {
+			maxConcurrent = v
+		}
+	}
+
+	return &Runner{
+		runs:       make(map[string]*Run),
+		httpClient: &http.Client{Timeout: 10 * time.Second},
+		runStore:   store.NewRunStore(),
+		semaphore:  make(chan struct{}, maxConcurrent),
+	}
+}
+
+func parseTimestamp(ts string) (time.Time, error) {
+	if ts == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339, ts)
+}
+
+// TryAcquireSlot attempts to acquire a concurrency slot, returns true if acquired, false if no slots available
+func (r *Runner) TryAcquireSlot() bool {
+	select {
+	case r.semaphore <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// ReleaseSlot releases a previously acquired concurrency slot
+func (r *Runner) ReleaseSlot() {
+	select {
+	case <-r.semaphore:
+		// slot released
+	default:
+		// nothing to release
+	}
+}
+
+func (r *Runner) BeginShutdown() {
+	r.shuttingDown.Store(true)
+}
+
+func (r *Runner) IsShuttingDown() bool {
+	return r.shuttingDown.Load()
+}
+
+func (r *Runner) Start(params StartParams) (string, error) {
+	if strings.TrimSpace(params.TargetBaseURL) == "" {
+		return "", errors.New("targetBaseUrl is required")
+	}
+	if params.RPS <= 0 {
+		return "", errors.New("rps must be > 0")
+	}
+	if params.Duration <= 0 {
+		return "", errors.New("duration must be > 0")
+	}
+	if strings.TrimSpace(params.ScenarioID) == "" {
+		return "", errors.New("scenarioId is required")
+	}
+
+	if params.Mode == "" {
+		params.Mode = "burst"
+	}
+
+	// Validate mode
+	if params.Mode != "burst" && params.Mode != "timestamp" {
+		return "", errors.New("mode must be 'burst' or 'timestamp'")
+	}
+
+	if params.Speed != 0 && params.Speed <= 0 {
+		return "", errors.New("speed must be > 0")
+	}
+
+	if params.MaxDelayMs < 0 {
+		return "", errors.New("maxDelayMs must be >= 0")
+	}
+
+	// Validate timestamps format StartFromTs, EndAtTs if not empty
+	startFrom, err := parseTimestamp(params.StartFromTs)
+	if err != nil {
+		return "", fmt.Errorf("invalid startFromTs: %w", err)
+	}
+	endAt, err := parseTimestamp(params.EndAtTs)
+	if err != nil {
+		return "", fmt.Errorf("invalid endAtTs: %w", err)
+	}
+
+	if !startFrom.IsZero() && !endAt.IsZero() && !(startFrom.Before(endAt) || startFrom.Equal(endAt)) {
+		return "", errors.New("startFromTs must be before endAtTs")
+	}
+
+	// Acquire concurrency semaphore slot
+	if !r.TryAcquireSlot() {
+		return "", errors.New("too_many_concurrent_runs")
+	}
+
+	// Load scenario events
+	rawEvents, err := scenario.LoadScenario(params.ScenarioID)
+	if err != nil {
+		r.ReleaseSlot()
+		return "", fmt.Errorf("load scenario error: %w", err)
+	}
+
+	// In timestamp mode, we require events to have valid ts and sort them
+	var events []scenario.Event
+	if params.Mode == "timestamp" {
+		return "", errors.New("timestamp mode is not implemented yet")
+	} else {
+		// For burst mode, use raw events
+		events = rawEvents
+	}
+
+	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
+
+	// update prometheus counter for requests
+	promReplayRequestsTotal.Inc()
+
+	// observability v2: count started run
+	modeLabel := params.Mode
+	if modeLabel == "" {
+		modeLabel = "unknown"
+	}
+	promReplayRunsTotal.WithLabelValues(modeLabel).Inc()
+
+	// Create run and start the goroutine
+	run := NewRun(runID, r.runStore)
+	run.mode = modeLabel
+	ctx, cancel := context.WithCancel(context.Background())
+	run.cancel = cancel
+	// assign release function
+	run.releaseSlot = func() {
+		r.ReleaseSlot()
+	}
+
+	r.mu.Lock()
+	r.runs[runID] = run
+	r.mu.Unlock()
+
+	// Initial report state
+	run.mu.Lock()
+	run.report["runId"] = runID
+	run.report["state"] = run.State
+	run.report["startedAt"] = run.StartedAt.Format(time.RFC3339)
+	run.report["stats"] = map[string]interface{}{
+		"requests": 0,
+		"errors":   0,
+		"p95ms":    0,
+	}
+	run.mu.Unlock()
+	run.persist()
+
+	// update active runs gauge
+	promReplayRunsActive.Inc()
+
+	go r.runLoad(ctx, run, params, events)
+
+	return runID, nil
+}
+
+// runLoad runs the replay load according to provided parameters
+func (r *Runner) runLoad(ctx context.Context, run *Run, params StartParams, events []scenario.Event) {
+	baseURL := strings.TrimRight(params.TargetBaseURL, "/")
+
+	if len(events) == 0 {
+		// No events to run, mark failed and return
+		run.MarkFailed()
+		return
+	}
+
+	rps := params.RPS
+	dur := params.Duration
+
+	if params.Mode == "burst" {
+		// Burst mode: send requests spaced by interval = 1/rps
+		interval := time.Second / time.Duration(rps) // spacing between requests
+		if interval == 0 {
+			interval = time.Millisecond * 1
+		}
+
+		end := time.Now().Add(dur)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		randSrc := rand.NewSource(time.Now().UnixNano())
+		randGen := rand.New(randSrc)
+
+		eventsLen := len(events)
+
+		for {
+			select {
+			case <-ctx.Done():
+				// run was stopped explicitly; MarkStopped is called by Stop/MarkStopped caller
+				return
+			case now := <-ticker.C:
+				if now.After(end) {
+					// Time exceeded stop run
+					run.MarkStopped()
+					return
+				}
+
+				start := time.Now()
+
+				// choose event weighted
+				ev := events[randGen.Intn(eventsLen)]
+
+				url := baseURL + ev.Path
+
+				var req *http.Request
+				var err error
+
+				if ev.Body != "" {
+					req, err = http.NewRequest(ev.Method, url, strings.NewReader(ev.Body))
+				} else {
+					req, err = http.NewRequest(ev.Method, url, nil)
+				}
+				if err != nil {
+					latencyMs := time.Since(start).Milliseconds()
+					run.AddSample(latencyMs, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				// apply headers if any
+				for k, v := range ev.Headers {
+					req.Header.Set(k, v)
+				}
+
+				resp, err := r.httpClient.Do(req)
+				latencyMs := time.Since(start).Milliseconds()
+				promReplayRequestDurationMs.Observe(float64(latencyMs))
+
+				if err != nil {
+					run.AddSample(latencyMs, true)
+					promReplayErrorsTotal.Inc()
+					continue
+				}
+
+				_ = resp.Body.Close()
+				isErr := resp.StatusCode >= 500
+				if isErr {
+					promReplayErrorsTotal.Inc()
+				}
+				run.AddSample(latencyMs, isErr)
+			}
+		}
+	}
+
+	// other modes (e.g. timestamp) would be implemented here
+}
+
+// Stop stops a specific run by runID
+func (r *Runner) Stop(runID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	run, ok := r.runs[runID]
+	if !ok {
+		return fmt.Errorf("run not found")
+	}
+
+	// Mark run as stopped and cancel its context
+	run.MarkStopped()
+
+	delete(r.runs, runID)
+	return nil
+}
+
+// StopAll stops all running replays and marks them as failed with given reason
+func (r *Runner) StopAll(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for id, run := range r.runs {
+		_ = id
+		run.MarkFailed()
+	}
+
+	// clear the map
+	r.runs = make(map[string]*Run)
+}
+
+// Status returns status response for given runID
+func (r *Runner) Status(runID string) (map[string]interface{}, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	run, ok := r.runs[runID]
+	if !ok {
+		return nil, fmt.Errorf("run not found")
+	}
+
+	return run.StatusResponse(), nil
+}
+
+// ListRuns returns up to limit runs loaded from store
+func (r *Runner) ListRuns(limit int) ([]store.Report, error) {
+	// delegate to store
+	runIDs, err := r.runStore.List(limit)
+	if err != nil {
+		return nil, err
+	}
+
+	var reports []store.Report
+	for _, id := range runIDs {
+		rep, err := r.runStore.Load(id)
+		if err != nil {
+			continue
+		}
+		reports = append(reports, rep)
+	}
+	return reports, nil
+}
+
+// LoadReport returns the full report for a given runID
+func (r *Runner) LoadReport(runID string) (store.Report, error) {
+	return r.runStore.Load(runID)
+}
+
+// StartParams holds parameters for starting a run
 type StartParams struct {
 	ScenarioID    string
 	TargetBaseURL string
@@ -26,246 +659,4 @@ type StartParams struct {
 	MaxDelayMs    int64
 	StartFromTs   string
 	EndAtTs       string
-}
-
-// Stats tracks run counters and p95 over bounded latency samples.
-type Stats struct {
-	mu       sync.Mutex
-	samples  []int64
-	cap      int
-	next     int
-	filled   int
-	p95      int64
-	Requests int
-	Errors   int
-}
-
-func NewStatsWithCap(capacity int) *Stats {
-	if capacity <= 0 {
-		capacity = defaultLatencySamplesCap
-	}
-	return &Stats{
-		samples: make([]int64, capacity),
-		cap:     capacity,
-	}
-}
-
-func (s *Stats) AddSample(latencyMs int64, isError bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.Requests++
-	if isError {
-		s.Errors++
-	}
-
-	s.samples[s.next] = latencyMs
-	s.next = (s.next + 1) % s.cap
-	if s.filled < s.cap {
-		s.filled++
-	}
-}
-
-func (s *Stats) CalculateP95() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.filled == 0 {
-		s.p95 = 0
-		return
-	}
-
-	data := make([]int64, s.filled)
-	copy(data, s.samples[:s.filled])
-	sort.Slice(data, func(i, j int) bool { return data[i] < data[j] })
-
-	idx := int(math.Floor(float64(len(data))*0.95)) - 1
-	if len(data) <= 3 {
-		idx = 0
-	}
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(data) {
-		idx = len(data) - 1
-	}
-	s.p95 = data[idx]
-}
-
-func (s *Stats) P95() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.p95
-}
-
-// Run is a single replay run state.
-type Run struct {
-	ID        string
-	CreatedAt time.Time
-	Status    string
-	Stats     *Stats
-}
-
-func NewRun(id string, _ interface{}) *Run {
-	return &Run{
-		ID:        id,
-		CreatedAt: time.Now().UTC(),
-		Status:    "running",
-		Stats:     NewStatsWithCap(readLatencyCap()),
-	}
-}
-
-func (r *Run) AddSample(latencyMs int64, isError bool) {
-	r.Stats.AddSample(latencyMs, isError)
-}
-
-func (r *Run) UpdateP95() {
-	r.Stats.CalculateP95()
-}
-
-// RunStatus is returned by the status endpoint.
-type RunStatus struct {
-	RunID    string `json:"runId"`
-	Status   string `json:"status"`
-	Requests int    `json:"requests"`
-	Errors   int    `json:"errors"`
-	P95Ms    int64  `json:"p95Ms"`
-}
-
-// Runner owns in-memory run lifecycle and report persistence.
-type Runner struct {
-	mu       sync.RWMutex
-	runs     map[string]*Run
-	runStore *store.RunStore
-}
-
-func NewRunner() *Runner {
-	return &Runner{
-		runs:     make(map[string]*Run),
-		runStore: store.NewRunStore(),
-	}
-}
-
-func (r *Runner) Start(params StartParams) (string, error) {
-	if params.ScenarioID == "" {
-		return "", errors.New("scenarioId is required")
-	}
-	if params.TargetBaseURL == "" {
-		return "", errors.New("targetBaseUrl is required")
-	}
-	if params.RPS <= 0 {
-		return "", errors.New("rps must be > 0")
-	}
-	if params.Duration <= 0 {
-		return "", errors.New("durationSec must be > 0")
-	}
-
-	runID := fmt.Sprintf("run-%d", time.Now().UTC().UnixNano())
-	run := NewRun(runID, nil)
-
-	r.mu.Lock()
-	r.runs[runID] = run
-	r.mu.Unlock()
-
-	if err := r.runStore.Save(runID, store.Report{
-		"runId":     runID,
-		"status":    run.Status,
-		"createdAt": run.CreatedAt.Format(time.RFC3339Nano),
-		"requests":  0,
-		"errors":    0,
-		"p95Ms":     0,
-	}); err != nil {
-		return "", err
-	}
-
-	return runID, nil
-}
-
-func (r *Runner) Stop(runID string) error {
-	if runID == "" {
-		return errors.New("runId is required")
-	}
-
-	r.mu.Lock()
-	run, ok := r.runs[runID]
-	if !ok {
-		r.mu.Unlock()
-		return errors.New("run not found")
-	}
-	run.Status = "stopped"
-	run.UpdateP95()
-	status := r.statusFromRun(run)
-	r.mu.Unlock()
-
-	return r.runStore.Save(runID, store.Report{
-		"runId":     status.RunID,
-		"status":    status.Status,
-		"createdAt": run.CreatedAt.Format(time.RFC3339Nano),
-		"requests":  status.Requests,
-		"errors":    status.Errors,
-		"p95Ms":     status.P95Ms,
-	})
-}
-
-func (r *Runner) Status(runID string) (RunStatus, error) {
-	if runID == "" {
-		return RunStatus{}, errors.New("runId is required")
-	}
-
-	r.mu.RLock()
-	run, ok := r.runs[runID]
-	r.mu.RUnlock()
-	if !ok {
-		return RunStatus{}, errors.New("run not found")
-	}
-	return r.statusFromRun(run), nil
-}
-
-func (r *Runner) ListRuns(limit int) ([]store.Report, error) {
-	ids, err := r.runStore.List(limit)
-	if err != nil {
-		return nil, err
-	}
-
-	reports := make([]store.Report, 0, len(ids))
-	for _, id := range ids {
-		rep, err := r.runStore.Load(id)
-		if err != nil {
-			continue
-		}
-		reports = append(reports, rep)
-	}
-	return reports, nil
-}
-
-func (r *Runner) LoadReport(runID string) (store.Report, error) {
-	return r.runStore.Load(runID)
-}
-
-func (r *Runner) statusFromRun(run *Run) RunStatus {
-	run.Stats.mu.Lock()
-	req := run.Stats.Requests
-	errCount := run.Stats.Errors
-	p95 := run.Stats.p95
-	run.Stats.mu.Unlock()
-
-	return RunStatus{
-		RunID:    run.ID,
-		Status:   run.Status,
-		Requests: req,
-		Errors:   errCount,
-		P95Ms:    p95,
-	}
-}
-
-func readLatencyCap() int {
-	v := os.Getenv("LATENCY_SAMPLES_CAP")
-	if v == "" {
-		return defaultLatencySamplesCap
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return defaultLatencySamplesCap
-	}
-	return n
 }

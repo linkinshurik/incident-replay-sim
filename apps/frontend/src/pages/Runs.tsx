@@ -31,8 +31,8 @@ const Runs: React.FC = () => {
       } else {
         setRuns([]);
       }
-    } catch (e: any) {
-      setError(e.message || "Error fetching runs");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Error fetching runs");
       setRuns([]);
     } finally {
       setLoading(false);

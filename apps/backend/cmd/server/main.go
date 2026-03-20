@@ -4,33 +4,22 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/linkinshurik/incident-replay/internal/httpapi"
 	"github.com/linkinshurik/incident-replay/internal/replay"
 )
 
 func main() {
-	addr := env("ADDR", ":8080")
+	addr := os.Getenv("ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
 
 	runner := replay.NewRunner()
 	h := httpapi.NewHandler(runner)
 
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           h.Routes(),
-		ReadHeaderTimeout: 5 * time.Second,
+	log.Printf("starting backend on %s", addr)
+	if err := http.ListenAndServe(addr, h); err != nil {
+		log.Fatalf("server failed: %v", err)
 	}
-
-	log.Printf("backend listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
-	}
-}
-
-func env(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
 }
