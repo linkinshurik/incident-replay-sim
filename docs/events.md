@@ -16,3 +16,7 @@
 ## Notes
 - `weight` використовується для частоти (1..N).
 - На v0 допускається: тільки method+path без body/headers.
+
+## HAR (Chrome DevTools)
+
+Можна отримати сценарій з HAR-файлу, експортованого з Chrome DevTools (Network → права кнопка → Save all as HAR with content). Backend приймає POST `/scenarios/upload-har` (multipart: scenarioId + file), конвертує кожен запис у подію з полем `ts` = `startedDateTime`, `path` = path+query з URL запиту, method, headers, body. Після завантаження сценарій з’являється в списку і його можна запускати в режимі **timestamp**, щоб зберегти інтервали між запитами під час load-тесту.

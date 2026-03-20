@@ -117,3 +117,20 @@ Response:
   "scenario1",
   "scenario2"
 ]
+
+## HAR upload (Chrome DevTools)
+
+POST `/scenarios/upload-har`
+- Content-Type: multipart/form-data
+- Form fields:
+  - `scenarioId`: string (letters, digits, underscore, dash)
+  - `file`: HAR file (e.g. exported from Chrome DevTools → Network → Save all as HAR with content)
+- Converts HAR to scenario JSONL (preserves request order and timestamps) and stores as `<scenarioId>.jsonl`.
+
+Response:
+- 200 OK
+{
+  "status": "ok",
+  "scenarioId": "string"
+}
+- 400 on invalid scenarioId, invalid HAR, or empty entries.

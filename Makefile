@@ -12,7 +12,7 @@ fmt: ## Format all code (Go + Frontend)
 	@echo "==> fmt (backend)"
 	@if [ -f "$(BACKEND_DIR)/go.mod" ]; then (cd $(BACKEND_DIR) && gofmt -w .); else echo "skip: no go.mod"; fi
 	@echo "==> fmt (frontend)"
-	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm run fmt || true); else echo "skip: no package.json"; fi
+	@if [ -f "$(FRONTEND_DIR)/package.json" ]; then (cd $(FRONTEND_DIR) && npm ci && npm run fmt || true); else echo "skip: no package.json"; fi
 
 lint: ## Lint all (Go + Frontend)
 	@echo "==> lint (backend)"
